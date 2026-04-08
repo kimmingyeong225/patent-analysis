@@ -1,9 +1,8 @@
 import streamlit as st
 import requests
 import os
-import json
-from openai import OpenAI
 from dotenv import load_dotenv
+from llm import analyze_novelty
 
 BACKEND_URL = "http://127.0.0.1:8000"
 load_dotenv()
@@ -14,13 +13,11 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
-/* 전체 */
 .stApp {
     background: #f5f6f8;
     font-family: 'IBM Plex Sans KR', sans-serif;
 }
 
-/* 사이드바 */
 [data-testid="stSidebar"] {
     background: #1c2b4a !important;
     border-right: none;
@@ -29,15 +26,9 @@ st.markdown("""
     color: #a8b8d0 !important;
     font-family: 'IBM Plex Sans KR', sans-serif !important;
 }
-[data-testid="stSidebar"] strong {
-    color: #ffffff !important;
-}
-[data-testid="stSidebar"] h3 {
-    color: #ffffff !important;
-    font-size: 1.1rem !important;
-}
+[data-testid="stSidebar"] strong { color: #ffffff !important; }
+[data-testid="stSidebar"] h3 { color: #ffffff !important; font-size: 1.1rem !important; }
 
-/* 타이틀 */
 h1 {
     font-family: 'IBM Plex Sans KR', sans-serif !important;
     font-weight: 600 !important;
@@ -51,7 +42,6 @@ h2, h3 {
     color: #1c2b4a !important;
 }
 
-/* 입력창 */
 [data-testid="stTextInput"] input {
     background: #ffffff !important;
     border: 1.5px solid #dde2ea !important;
@@ -67,11 +57,8 @@ h2, h3 {
     border-color: #2563eb !important;
     box-shadow: 0 0 0 3px rgba(37,99,235,0.1) !important;
 }
-[data-testid="stTextInput"] input::placeholder {
-    color: #9ba8bb !important;
-}
+[data-testid="stTextInput"] input::placeholder { color: #9ba8bb !important; }
 
-/* 버튼 */
 .stButton > button {
     background: #2563eb !important;
     color: #ffffff !important;
@@ -81,7 +68,6 @@ h2, h3 {
     border: none !important;
     border-radius: 8px !important;
     padding: 0.55rem 1.8rem !important;
-    letter-spacing: 0.2px;
     box-shadow: 0 2px 8px rgba(37,99,235,0.25) !important;
     transition: background 0.2s, transform 0.1s, box-shadow 0.2s !important;
 }
@@ -90,11 +76,8 @@ h2, h3 {
     transform: translateY(-1px) !important;
     box-shadow: 0 4px 12px rgba(37,99,235,0.3) !important;
 }
-.stButton > button p {
-    color: #ffffff !important;
-}
+.stButton > button p { color: #ffffff !important; }
 
-/* Expander 카드 */
 [data-testid="stExpander"] {
     background: #ffffff !important;
     border: 1.5px solid #e4e9f0 !important;
@@ -114,7 +97,6 @@ h2, h3 {
     font-size: 0.95rem !important;
 }
 
-/* Metric 카드 */
 [data-testid="stMetric"] {
     background: #ffffff !important;
     border: 1.5px solid #e4e9f0 !important;
@@ -137,25 +119,15 @@ h2, h3 {
     font-size: 1.8rem !important;
 }
 
-/* p, li */
 p, li {
     color: #3d4f6e !important;
     font-family: 'IBM Plex Sans KR', sans-serif !important;
     line-height: 1.75 !important;
     font-size: 0.94rem !important;
 }
-strong {
-    color: #1c2b4a !important;
-    font-weight: 600 !important;
-}
+strong { color: #1c2b4a !important; font-weight: 600 !important; }
+hr { border-color: #e4e9f0 !important; margin: 1.5rem 0 !important; }
 
-/* 구분선 */
-hr {
-    border-color: #e4e9f0 !important;
-    margin: 1.5rem 0 !important;
-}
-
-/* 코드 블록 (차이점 넘버링) */
 code {
     background: #eef2ff !important;
     color: #2563eb !important;
@@ -166,7 +138,6 @@ code {
     font-weight: 500 !important;
 }
 
-/* 스크롤바 */
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: #f5f6f8; }
 ::-webkit-scrollbar-thumb { background: #dde2ea; border-radius: 4px; }
@@ -189,7 +160,7 @@ with st.sidebar:
 
 # ── 헤더 ─────────────────────────────────────────────────────
 st.markdown("# 🔬 PatentAI")
-st.markdown("<p style='color:#6b7a99; margin-top:-0.6rem; font-size:0.97rem; font-family:IBM Plex Sans KR,sans-serif;'>AI 기반 특허 신규성 분석 시스템</p>", unsafe_allow_html=True)
+st.markdown("<p style='color:#6b7a99; margin-top:-0.6rem; font-size:0.97rem;'>AI 기반 특허 신규성 분석 시스템</p>", unsafe_allow_html=True)
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ── 입력 ─────────────────────────────────────────────────────
@@ -206,6 +177,7 @@ with col_btn:
 # ── 분석 실행 ────────────────────────────────────────────────
 if run:
     if user_input:
+        # ── 1단계: 특허 검색 ──
         with st.spinner("특허 데이터베이스 검색 중..."):
             try:
                 res = requests.post(
@@ -250,60 +222,30 @@ if run:
                             for claim in pub["claims"]:
                                 st.markdown(f"- {claim}")
 
-                # AI 분석
+                # ── 2단계: AI 신규성 분석 ──
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.markdown("### 🤖 AI 신규성 분석")
 
                 with st.spinner("GPT-4o 분석 중..."):
-                    patent_summary = "\n".join([
-                        f"[{p['rank']}위] {p['공개등록공보']['title']}\n초록: {p['공개등록공보']['abstract']}"
-                        for p in data["results"]
-                    ])
+                    analysis = analyze_novelty(user_input, data["results"])
 
-                    prompt = f"""
-당신은 특허 신규성 분석 전문가입니다.
-아래 유사 선행 특허들을 참고하여 사용자 아이디어를 분석하세요.
-
-[사용자 아이디어]
-{user_input}
-
-[유사 선행 특허]
-{patent_summary}
-
-반드시 아래 JSON 형식으로만 응답하세요:
-{{
-  "patent_title": "공식 특허 명칭",
-  "summary": "아이디어 3줄 요약",
-  "differences": ["선행특허와 차이점 1", "차이점 2", "차이점 3"],
-  "novelty_score": 0~100 사이 숫자,
-  "novelty_reason": "점수 근거",
-  "risk_level": "낮음 또는 중간 또는 높음",
-  "risk_reason": "리스크 근거"
-}}
-JSON 외 다른 텍스트는 출력하지 마세요.
-"""
-                    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-                    gpt_res = client.chat.completions.create(
-                        model="gpt-4o",
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0
-                    )
-
-                    try:
-                        raw = gpt_res.choices[0].message.content
-                        clean = raw.replace("```json", "").replace("```", "").strip()
-                        analysis = json.loads(clean)
-
+                    if "error" in analysis:
+                        st.error(f"AI 분석 실패: {analysis['error']}")
+                        if analysis.get("raw"):
+                            st.code(analysis["raw"])
+                    else:
+                        # ── 상단 메트릭 ──
                         m1, m2, m3 = st.columns(3)
                         with m1:
                             st.metric("신규성 점수", f"{analysis['novelty_score']} / 100")
                         with m2:
                             st.metric("리스크 수준", analysis["risk_level"])
                         with m3:
-                            st.metric("제안 특허명", analysis['patent_title'][:14] + "...")
+                            st.metric("제안 특허명", str(analysis['patent_title'])[:14] + "...")
 
                         st.markdown("---")
 
+                        # ── 요약 + 리스크 ──
                         col_a, col_b = st.columns(2)
                         with col_a:
                             st.markdown("**📋 아이디어 요약**")
@@ -312,14 +254,58 @@ JSON 외 다른 텍스트는 출력하지 마세요.
                             st.markdown("**⚠️ 리스크 근거**")
                             st.markdown(analysis["risk_reason"])
 
+                        # ── 선행특허별 비교 ──
                         st.markdown("<br>", unsafe_allow_html=True)
-                        st.markdown("**🔍 선행 특허와의 차이점**")
-                        for i, d in enumerate(analysis["differences"], 1):
-                            st.markdown(f"`{i}`  {d}")
+                        st.markdown("### 🔍 선행특허별 상세 비교")
 
-                    except json.JSONDecodeError:
-                        st.error("AI 응답 파싱 실패. 다시 시도해주세요.")
-                        st.code(raw)
+                        for comp in analysis.get("prior_art_comparison", []):
+                            threat = comp.get("threat_level", "")
+                            threat_icon = {"높음": "🔴", "중간": "🟡", "낮음": "🟢"}.get(threat, "⚪")
+
+                            with st.expander(f"{threat_icon} {comp.get('title', '')}  —  위협도: {threat}"):
+                                st.markdown(f"**출원번호:** {comp.get('patent_id', 'N/A')}")
+                                st.markdown(f"**겹치는 부분:** {comp.get('overlap', '')}")
+                                st.markdown(f"**차별점:** {comp.get('difference', '')}")
+
+                        # ── 5가지 관점 분석 (탭) ──
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        st.markdown("### 💡 5가지 관점 분석")
+
+                        def format_aspect(text: str) -> str:
+                            """GPT 응답을 가독성 좋은 bullet 리스트로 변환"""
+                            if not text or text == "분석 데이터 없음":
+                                return "분석 데이터 없음"
+                            lines = [l.strip() for l in text.split("\n") if l.strip()]
+                            if len(lines) <= 1:
+                                # 줄바꿈 없이 온 경우 → 마침표 기준 분리
+                                lines = [l.strip() for l in text.split(". ") if l.strip()]
+                                lines = [l if l.endswith(".") else l + "." for l in lines]
+                            return "\n".join([f"- {l}" for l in lines])
+
+                        five = analysis.get("five_aspects", {})
+                        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                            "🚀 혁신 포인트",
+                            "🔧 구현 방법",
+                            "📈 시장성",
+                            "🛡️ 회피 설계",
+                            "✅ 등록 가능성"
+                        ])
+
+                        with tab1:
+                            st.markdown(format_aspect(five.get("innovation_point", "분석 데이터 없음")))
+                        with tab2:
+                            st.markdown(format_aspect(five.get("implementation", "분석 데이터 없음")))
+                        with tab3:
+                            st.markdown(format_aspect(five.get("marketability", "분석 데이터 없음")))
+                        with tab4:
+                            st.markdown(format_aspect(five.get("design_around", "분석 데이터 없음")))
+                        with tab5:
+                            st.markdown(format_aspect(five.get("registrability", "분석 데이터 없음")))
+
+                        # ── 최종 조언 ──
+                        st.markdown("---")
+                        st.markdown("### 📌 출원 전략 조언")
+                        st.info(analysis.get("recommendation", "조언 데이터 없음"))
 
             except requests.exceptions.ConnectionError:
                 st.error("🔌 백엔드 서버에 연결할 수 없습니다. 백엔드를 먼저 실행해주세요.")
