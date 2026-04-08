@@ -312,4 +312,4 @@ if run:
             except Exception as e:
                 st.error(f"오류 발생: {e}")
     else:
-        st.warning("아이디어를 입력해주세요.")
+

@@ -134,4 +134,3 @@ def analyze_novelty(user_idea: str, patents: list, model: str = "gpt-4o") -> dic
     except json.JSONDecodeError:
         return {"error": "JSON 파싱 실패", "raw": raw}
     except Exception as e:
-        return {"error": str(e), "raw": ""}
