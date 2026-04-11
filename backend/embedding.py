@@ -1,6 +1,5 @@
-# 📌 임베딩 및 벡터 검색 파일
-# 역할: 특허 텍스트를 벡터로 변환 + 코사인 유사도 기반 FAISS 검색
-# 담당: 민경
+# 임베딩 및 벡터 검색 파일
+# - 특허 텍스트를 벡터로 변환 + 코사인 유사도 기반 FAISS 검색
 
 import numpy as np
 import faiss
@@ -13,7 +12,7 @@ load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-# ──────────────── 임베딩 ────────────────
+# 임베딩 
 
 def get_embedding(text: str) -> np.ndarray:
     """OpenAI text-embedding-3-small로 진짜 벡터 생성"""
@@ -24,7 +23,7 @@ def get_embedding(text: str) -> np.ndarray:
     return np.array(response.data[0].embedding, dtype="float32")
 
 
-# ──────────────── 청킹 ────────────────
+# 청킹 
 
 def chunk_patent(patent_info: dict) -> list[dict]:
     """
@@ -36,12 +35,12 @@ def chunk_patent(patent_info: dict) -> list[dict]:
     abstract = patent_info.get("abstract", "").strip()
     claims = patent_info.get("claims", [])
     
-    # 메타데이터 컨텍스트 (각 청크 앞에 붙임)
+    # 메타데이터 컨텍스트
     context_prefix = f"[특허: {title}] " if title else ""
     
     chunks = []
 
-    # 1) 제목 + 요약 통합 청크 (가장 중요)
+    # 1) 제목 + 요약 통합 청크 (중요)
     if title or abstract:
         combined = f"{title}. {abstract}" if abstract else title
         chunks.append({
@@ -80,7 +79,7 @@ def chunk_patents(results: list[dict]) -> list[dict]:
 def normalize_vectors(vectors: np.ndarray) -> np.ndarray:
     """L2 정규화 — 내적(IP)이 코사인 유사도와 동일해짐"""
     norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-    norms[norms == 0] = 1  # 0벡터 방지
+    norms[norms == 0] = 1  
     return vectors / norms
 
 
@@ -91,13 +90,11 @@ def build_faiss_index(chunks: list[dict]):
     """
     texts = [c["text"] for c in chunks]
     
-    # 진짜 OpenAI 임베딩
+    #  OpenAI 임베딩
     vectors = np.array([get_embedding(t) for t in texts])
     
-    # L2 정규화 (코사인 유사도용)
     vectors = normalize_vectors(vectors)
     
-    # IndexFlatIP = 내적 기반 → 정규화된 벡터에서는 코사인 유사도
     dim = vectors.shape[1]
     index = faiss.IndexFlatIP(dim)
     index.add(vectors)

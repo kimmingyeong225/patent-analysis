@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
-from dotenv import load_dotenv  # 팀원 코드
-import os                       # 팀원 코드
+from dotenv import load_dotenv  
+import os                       
 import models, schemas
 from database import engine, get_db, Base
 from kipris import fetch_patent_data_from_kipris

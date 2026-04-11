@@ -50,8 +50,6 @@ class SearchResponse(BaseModel):
     cached: bool
     results: List[SearchResultItem]
 
-# 유사도 검색 스키마
-
 class SimilarityRequest(BaseModel):
     query: str
     top_k: int = 5
