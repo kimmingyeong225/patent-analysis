@@ -6,6 +6,7 @@ import models, schemas
 from database import engine, get_db, Base
 from kipris import fetch_patent_data_from_kipris
 from mock_data import MOCK_SEARCH_RESPONSE
+import llm
 # 환경 변수 로드 (.env 파일)
 load_dotenv()
 # 데이터베이스 테이블 생성
@@ -56,6 +57,20 @@ def get_patent_detail(patent_id: str, db: Session = Depends(get_db)):
             }
     
     raise HTTPException(status_code=404, detail="Patent not found")
+@app.post("/analyze", response_model=schemas.AnalyzeResponse)
+def analyze_patent(request: schemas.AnalyzeRequest):
+    """
+    사용자 아이디어와 유사 특허 리스트를 받아 GPT-4o로 신규성 분석을 수행합니다.
+    """
+    patents_as_dict = [p.model_dump() for p in request.patents]
+    result = llm.analyze_novelty(request.user_idea, patents_as_dict)
+
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    return result
+
+
 @app.get("/trend")
 def get_trend(query: str):
     """

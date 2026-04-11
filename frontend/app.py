@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import os
+import plotly.express as px
 from dotenv import load_dotenv
 from llm import analyze_novelty
 
@@ -312,4 +313,71 @@ if run:
             except Exception as e:
                 st.error(f"오류 발생: {e}")
     else:
+        st.warning("아이디어를 입력해주세요.")
 
+# ── 트렌드 분석 ──────────────────────────────────────────────
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown("---")
+st.markdown("### 📈 연도별 출원 트렌드 분석")
+st.markdown(
+    "<p style='color:#6b7a99; margin-top:-0.6rem; font-size:0.9rem;'>키워드를 입력하면 연도별 특허 출원 동향을 확인할 수 있습니다.</p>",
+    unsafe_allow_html=True
+)
+
+trend_input = st.text_input(
+    "",
+    placeholder="트렌드를 분석할 키워드 입력  —  예: 태양광 충전",
+    label_visibility="collapsed",
+    key="trend_input"
+)
+
+col_trend_btn, _ = st.columns([1, 6])
+with col_trend_btn:
+    trend_run = st.button("트렌드 조회 →", key="trend_btn")
+
+if trend_run:
+    if trend_input:
+        with st.spinner("트렌드 데이터 조회 중..."):
+            try:
+                res = requests.get(
+                    f"{BACKEND_URL}/trend",
+                    params={"query": trend_input},
+                    timeout=10
+                )
+                res.raise_for_status()
+                trend_data = res.json()
+
+                years = [d["year"] for d in trend_data["trend_data"]]
+                counts = [d["count"] for d in trend_data["trend_data"]]
+
+                fig = px.bar(
+                    x=years,
+                    y=counts,
+                    labels={"x": "연도", "y": "출원 건수"},
+                    title=f"'{trend_data['query']}' 키워드 연도별 출원 트렌드",
+                    color=counts,
+                    color_continuous_scale="Blues",
+                )
+                fig.update_layout(
+                    plot_bgcolor="white",
+                    paper_bgcolor="white",
+                    font_family="IBM Plex Sans KR",
+                    title_font_size=15,
+                    title_font_color="#1c2b4a",
+                    coloraxis_showscale=False,
+                    xaxis=dict(tickmode="linear", dtick=1, gridcolor="#f0f0f0"),
+                    yaxis=dict(gridcolor="#f0f0f0"),
+                    hoverlabel=dict(bgcolor="white", font_size=13),
+                )
+                fig.update_traces(
+                    hovertemplate="<b>%{x}년</b><br>출원 건수: %{y}건<extra></extra>"
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+
+            except requests.exceptions.ConnectionError:
+                st.error("🔌 백엔드 서버에 연결할 수 없습니다. 백엔드를 먼저 실행해주세요.")
+            except Exception as e:
+                st.error(f"오류 발생: {e}")
+    else:
+        st.warning("키워드를 입력해주세요.")

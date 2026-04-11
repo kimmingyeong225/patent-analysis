@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 class SearchRequest(BaseModel):
     query: str
@@ -49,3 +49,36 @@ class SearchResponse(BaseModel):
     query: str
     cached: bool
     results: List[SearchResultItem]
+
+
+class AnalyzeRequest(BaseModel):
+    user_idea: str
+    patents: List[SearchResultItem]
+
+
+class PriorArtItem(BaseModel):
+    patent_id: str
+    title: str
+    overlap: str
+    difference: str
+    threat_level: str
+
+
+class FiveAspects(BaseModel):
+    innovation_point: str
+    implementation: str
+    marketability: str
+    design_around: str
+    registrability: str
+
+
+class AnalyzeResponse(BaseModel):
+    patent_title: str
+    summary: str
+    prior_art_comparison: List[PriorArtItem]
+    five_aspects: FiveAspects
+    novelty_score: int
+    novelty_reason: str
+    risk_level: str
+    risk_reason: str
+    recommendation: str
