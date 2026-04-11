@@ -19,3 +19,4 @@ def analyze_novelty(user_idea: str, patents: list, model: str = "gpt-4o") -> dic
     except requests.exceptions.ConnectionError:
         return {"error": "백엔드 서버에 연결할 수 없습니다.", "raw": ""}
     except Exception as e:
+        return {"error": str(e), "raw": ""}
