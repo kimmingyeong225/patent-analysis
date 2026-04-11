@@ -70,25 +70,32 @@ def get_trend(query: str):
         ]
     }
 
-#  유사도 검색 엔드포인트  
+# ──────────────── 유사도 검색 엔드포인트 (팀원 2 추가) ────────────────
 
 from embedding import chunk_patents, build_faiss_index, search_similar
 
 @app.post("/similarity", response_model=schemas.SimilarityResponse)
 def similarity_search(request: schemas.SimilarityRequest):
     """
-    사용자 쿼리 → Mock 특허 청킹 → OpenAI 임베딩 → 코사인 유사도 FAISS → TOP K 반환
+    사용자 쿼리 → KIPRIS 실제 데이터 → 청킹 → OpenAI 임베딩 → 코사인 유사도 FAISS → TOP K 반환
     """
     query = request.query
     top_k = request.top_k
 
-    # 1. 특허 데이터 청킹
-    chunks = chunk_patents(MOCK_SEARCH_RESPONSE["results"])
+    # 1. KIPRIS에서 실제 특허 데이터 가져오기
+    kipris_results = fetch_patent_data_from_kipris(query)
 
-    # 2. FAISS 인덱스 생성 (임베딩 포함)
+    # KIPRIS 실패 시 Mock 데이터 사용
+    if not kipris_results:
+        kipris_results = MOCK_SEARCH_RESPONSE["results"]
+
+    # 2. 특허 데이터 청킹
+    chunks = chunk_patents(kipris_results)
+
+    # 3. FAISS 인덱스 생성 (임베딩 포함)
     index, chunks = build_faiss_index(chunks)
 
-    # 3. 유사도 검색
+    # 4. 유사도 검색
     results = search_similar(query, index, chunks, top_k=top_k)
 
     return {
