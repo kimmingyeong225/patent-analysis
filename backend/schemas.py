@@ -49,3 +49,23 @@ class SearchResponse(BaseModel):
     query: str
     cached: bool
     results: List[SearchResultItem]
+
+# 유사도 검색 스키마
+
+class SimilarityRequest(BaseModel):
+    query: str
+    top_k: int = 5
+
+class SimilarChunkItem(BaseModel):
+    rank: int
+    patent_id: str
+    section: str
+    text: str
+    similarity_score: float
+
+class SimilarityResponse(BaseModel):
+    query: str
+    total_chunks: int
+    results: list[SimilarChunkItem]
+
+    

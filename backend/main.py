@@ -69,3 +69,30 @@ def get_trend(query: str):
             {"year": "2022", "count": 25},
         ]
     }
+
+#  유사도 검색 엔드포인트  
+
+from embedding import chunk_patents, build_faiss_index, search_similar
+
+@app.post("/similarity", response_model=schemas.SimilarityResponse)
+def similarity_search(request: schemas.SimilarityRequest):
+    """
+    사용자 쿼리 → Mock 특허 청킹 → OpenAI 임베딩 → 코사인 유사도 FAISS → TOP K 반환
+    """
+    query = request.query
+    top_k = request.top_k
+
+    # 1. 특허 데이터 청킹
+    chunks = chunk_patents(MOCK_SEARCH_RESPONSE["results"])
+
+    # 2. FAISS 인덱스 생성 (임베딩 포함)
+    index, chunks = build_faiss_index(chunks)
+
+    # 3. 유사도 검색
+    results = search_similar(query, index, chunks, top_k=top_k)
+
+    return {
+        "query": query,
+        "total_chunks": len(chunks),
+        "results": results
+    }
