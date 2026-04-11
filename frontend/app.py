@@ -5,7 +5,7 @@ import plotly.express as px
 from dotenv import load_dotenv
 from llm import analyze_novelty
 
-BACKEND_URL = "http://127.0.0.1:8000"
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000")
 load_dotenv()
 
 st.set_page_config(page_title="PatentAI | 특허 신규성 분석기", layout="wide", page_icon="🔬")

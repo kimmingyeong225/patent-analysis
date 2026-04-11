@@ -117,11 +117,11 @@ def analyze_novelty(user_idea: str, patents: list, model: str = "gpt-4o") -> dic
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0,
+            response_format={"type": "json_object"},
         )
 
         raw = response.choices[0].message.content
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        analysis = json.loads(clean)
+        analysis = json.loads(raw)
 
         # novelty_score를 int로 정규화 (GPT가 문자열로 반환하는 경우 대비)
         if "novelty_score" in analysis:
