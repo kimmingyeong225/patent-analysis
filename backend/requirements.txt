@@ -6,3 +6,5 @@ requests
 xmltodict
 openai
 python-dotenv
+numpy
+faiss-cpu

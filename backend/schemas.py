@@ -51,6 +51,7 @@ class SearchResponse(BaseModel):
     results: List[SearchResultItem]
 
 
+# ── /analyze 스키마 ──────────────────────────────────────────
 class AnalyzeRequest(BaseModel):
     user_idea: str
     patents: List[SearchResultItem]
@@ -82,3 +83,23 @@ class AnalyzeResponse(BaseModel):
     risk_level: str
     risk_reason: str
     recommendation: str
+
+
+# ── /similarity 스키마 ───────────────────────────────────────
+class SimilarityRequest(BaseModel):
+    query: str
+    top_k: int = 5
+
+
+class SimilarChunkItem(BaseModel):
+    rank: int
+    patent_id: str
+    section: str
+    text: str
+    similarity_score: float
+
+
+class SimilarityResponse(BaseModel):
+    query: str
+    total_chunks: int
+    results: List[SimilarChunkItem]

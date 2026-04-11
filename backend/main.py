@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
-from dotenv import load_dotenv  # 팀원 코드
-import os                       # 팀원 코드
+from dotenv import load_dotenv  
+import os                       
 import models, schemas
 from database import engine, get_db, Base
 from kipris import fetch_patent_data_from_kipris
@@ -29,19 +29,17 @@ def search_patents(request: schemas.SearchRequest, db: Session = Depends(get_db)
     parsed_results = fetch_patent_data_from_kipris(query)
     
     if not parsed_results:
-        # KIPRIS API 호출이 실패하거나 결과가 없으면 Mock 데이터를 반환합니다.
         print("Fallback to MOCK_DATA")
-        return MOCK_SEARCH_RESPONSE
-        
-    response_data = {
+        parsed_results = list(MOCK_SEARCH_RESPONSE["results"])
+
+    # FAISS 코사인 유사도 점수 적용 및 정렬
+    parsed_results = _apply_faiss_scores(parsed_results, query)
+
+    return {
         "query": query,
         "cached": False,
         "results": parsed_results
     }
-    
-    # 향후 여기에 DB 캐싱 로직 추가 (models.Patent 등에 저장)
-    
-    return response_data
 @app.get("/patent/{patent_id}")
 def get_patent_detail(patent_id: str, db: Session = Depends(get_db)):
     """
@@ -83,4 +81,76 @@ def get_trend(query: str):
             {"year": "2021", "count": 15},
             {"year": "2022", "count": 25},
         ]
+    }
+
+# ──────────────── 유사도 검색 엔드포인트 (팀원 2 추가) ────────────────
+
+from embedding import chunk_patents, build_faiss_index, search_similar
+
+
+def _apply_faiss_scores(patents: list, query: str) -> list:
+    """
+    KIPRIS 결과에 FAISS 코사인 유사도 점수를 적용합니다.
+    특허별로 청크 중 최고 유사도를 대표 점수로 사용하고 내림차순 정렬합니다.
+    """
+    try:
+        chunks = chunk_patents(patents)
+        if not chunks:
+            return patents
+
+        index, chunks = build_faiss_index(chunks)
+        chunk_results = search_similar(query, index, chunks, top_k=len(chunks))
+
+        # 특허 ID별 최고 유사도 점수 집계
+        best_scores: dict[str, float] = {}
+        for r in chunk_results:
+            pid = r["patent_id"]
+            if pid not in best_scores or r["similarity_score"] > best_scores[pid]:
+                best_scores[pid] = r["similarity_score"]
+
+        # 유사도 점수 반영 + 내림차순 정렬
+        for patent in patents:
+            pid = patent["공개등록공보"]["patent_id"]
+            patent["similarity_score"] = best_scores.get(pid, 0.0)
+
+        patents.sort(key=lambda p: p["similarity_score"], reverse=True)
+
+        # rank 재부여
+        for i, patent in enumerate(patents):
+            patent["rank"] = i + 1
+
+    except Exception as e:
+        print(f"FAISS 유사도 계산 실패, 기본 순서 유지: {e}")
+
+    return patents
+
+
+@app.post("/similarity", response_model=schemas.SimilarityResponse)
+def similarity_search(request: schemas.SimilarityRequest):
+    """
+    사용자 쿼리 → KIPRIS 실제 데이터 → 청킹 → OpenAI 임베딩 → 코사인 유사도 FAISS → TOP K 반환
+    """
+    query = request.query
+    top_k = request.top_k
+
+    # 1. KIPRIS에서 실제 특허 데이터 가져오기
+    kipris_results = fetch_patent_data_from_kipris(query)
+
+    # KIPRIS 실패 시 Mock 데이터 사용
+    if not kipris_results:
+        kipris_results = MOCK_SEARCH_RESPONSE["results"]
+
+    # 2. 특허 데이터 청킹
+    chunks = chunk_patents(kipris_results)
+
+    # 3. FAISS 인덱스 생성 (임베딩 포함)
+    index, chunks = build_faiss_index(chunks)
+
+    # 4. 유사도 검색
+    results = search_similar(query, index, chunks, top_k=top_k)
+
+    return {
+        "query": query,
+        "total_chunks": len(chunks),
+        "results": results
     }
