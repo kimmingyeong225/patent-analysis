@@ -166,7 +166,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 # ── 입력 ─────────────────────────────────────────────────────
 user_input = st.text_input(
-    "",
+    "아이디어 입력",
     placeholder="분석할 아이디어를 입력하세요  —  예: 자가 충전형 스마트 워치 스트랩",
     label_visibility="collapsed"
 )
@@ -325,7 +325,7 @@ st.markdown(
 )
 
 trend_input = st.text_input(
-    "",
+    "트렌드 키워드 입력",
     placeholder="트렌드를 분석할 키워드 입력  —  예: 태양광 충전",
     label_visibility="collapsed",
     key="trend_input"
