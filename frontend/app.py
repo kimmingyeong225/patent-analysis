@@ -184,7 +184,7 @@ if run:
                 res = requests.post(
                     f"{BACKEND_URL}/search",
                     json={"query": user_input},
-                    timeout=10
+                    timeout=60
                 )
                 res.raise_for_status()
                 data = res.json()

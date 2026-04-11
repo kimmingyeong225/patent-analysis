@@ -1,12 +1,15 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
-from dotenv import load_dotenv  
-import os                       
+from dotenv import load_dotenv
+import os
 import models, schemas
 from database import engine, get_db, Base
 from kipris import fetch_patent_data_from_kipris
 from mock_data import MOCK_SEARCH_RESPONSE
 import llm
+
+# FAISS 인덱스 메모리 캐시 — 동일 쿼리 재요청 시 임베딩 API 재호출 방지
+_faiss_cache: dict = {}  # { query: (index, chunks) }
 # 환경 변수 로드 (.env 파일)
 load_dotenv()
 # 데이터베이스 테이블 생성
@@ -92,13 +95,19 @@ def _apply_faiss_scores(patents: list, query: str) -> list:
     """
     KIPRIS 결과에 FAISS 코사인 유사도 점수를 적용합니다.
     특허별로 청크 중 최고 유사도를 대표 점수로 사용하고 내림차순 정렬합니다.
+    동일 쿼리는 캐시된 인덱스를 재사용합니다.
     """
     try:
         chunks = chunk_patents(patents)
         if not chunks:
             return patents
 
-        index, chunks = build_faiss_index(chunks)
+        if query in _faiss_cache:
+            index, chunks = _faiss_cache[query]
+        else:
+            index, chunks = build_faiss_index(chunks)
+            _faiss_cache[query] = (index, chunks)
+
         chunk_results = search_similar(query, index, chunks, top_k=len(chunks))
 
         # 특허 ID별 최고 유사도 점수 집계
