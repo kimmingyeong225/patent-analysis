@@ -27,13 +27,15 @@ def search_patents(request: schemas.SearchRequest, db: Session = Depends(get_db)
     초기 뼈대: KIPRIS 검색 후 결과를 바로 반환 (캐싱/DB 저장 로직은 확장 가능)
     """
     query = request.query
-    
-    # KIPRIS API 연동 시도
-    parsed_results = fetch_patent_data_from_kipris(query)
-    
-    if not parsed_results:
-        print("Fallback to MOCK_DATA")
+
+    if os.getenv("USE_MOCK", "false").lower() == "true":
+        print("USE_MOCK=true → mock 데이터 사용")
         parsed_results = list(MOCK_SEARCH_RESPONSE["results"])
+    else:
+        parsed_results = fetch_patent_data_from_kipris(query)
+        if not parsed_results:
+            print("Fallback to MOCK_DATA")
+            parsed_results = list(MOCK_SEARCH_RESPONSE["results"])
 
     # FAISS 코사인 유사도 점수 적용 및 정렬
     parsed_results = _apply_faiss_scores(parsed_results, query)
@@ -143,11 +145,12 @@ def similarity_search(request: schemas.SimilarityRequest):
     top_k = request.top_k
 
     # 1. KIPRIS에서 실제 특허 데이터 가져오기
-    kipris_results = fetch_patent_data_from_kipris(query)
-
-    # KIPRIS 실패 시 Mock 데이터 사용
-    if not kipris_results:
-        kipris_results = MOCK_SEARCH_RESPONSE["results"]
+    if os.getenv("USE_MOCK", "false").lower() == "true":
+        kipris_results = list(MOCK_SEARCH_RESPONSE["results"])
+    else:
+        kipris_results = fetch_patent_data_from_kipris(query)
+        if not kipris_results:
+            kipris_results = MOCK_SEARCH_RESPONSE["results"]
 
     # 2. 특허 데이터 청킹
     chunks = chunk_patents(kipris_results)
