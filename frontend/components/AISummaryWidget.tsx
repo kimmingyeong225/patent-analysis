@@ -50,6 +50,33 @@ function formatAspect(text: string): string[] {
     : text.split(". ").map((s) => s.trim()).filter(Boolean).map((s) => (s.endsWith(".") ? s : `${s}.`));
 }
 
+/* ── 분석 요약 불릿 포인트 ──────────────────────
+   줄글 요약을 문장 단위로 분리해 • 리스트로 렌더링.
+   내용은 100% 보존하고 표현 형식만 변경합니다.
+──────────────────────────────────────────────── */
+function SummaryBullets({ text }: { text: string }) {
+  const sentences = text
+    .split(/\n+/)
+    .flatMap((line) => line.split(/(?<=[.!?])\s+/))
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (sentences.length <= 1) {
+    return <p className="text-sm text-slate-600 leading-relaxed">{text}</p>;
+  }
+
+  return (
+    <ul className="space-y-2">
+      {sentences.map((s, i) => (
+        <li key={i} className="flex items-start gap-2 text-sm text-slate-600 leading-relaxed">
+          <span className="text-blue-400 font-bold shrink-0 mt-0.5 select-none">•</span>
+          <span>{s}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /* ── Props ───────────────────────────────────── */
 interface AISummaryWidgetProps {
   analysis: Analysis;
@@ -115,7 +142,7 @@ export default function AISummaryWidget({ analysis, onDownload }: AISummaryWidge
         <div className="flex-1 min-w-0 space-y-3.5">
           <div>
             <p className="text-xs font-semibold text-slate-500 mb-1.5">분석 요약</p>
-            <p className="text-sm text-slate-600 leading-relaxed">{analysis.summary}</p>
+            <SummaryBullets text={analysis.summary} />
           </div>
           <div>
             <p className="text-xs font-semibold text-slate-500 mb-1.5">출원 전략 조언</p>

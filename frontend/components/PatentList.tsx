@@ -30,9 +30,17 @@ function StatusBadge({ status, isAlive }: { status: string; isAlive: boolean }) 
 function PatentRow({ patent }: { patent: PatentResult }) {
   const [open, setOpen] = useState(false);
   const pub = patent.공개등록공보;
-  const pct = Math.round(parseFloat(patent.similarity_score) * 100);
+  const pct = Math.round(patent.similarity_score * 100);
   const { text, bg, border } = scoreStyle(pct);
-  const kiprisUrl = `https://www.kipris.or.kr/khome/searchResult.do?query=${pub.application_number}`;
+  const appNumClean = pub.application_number.replace(/-/g, "");
+  const patentIdClean = pub.patent_id.replace(/-/g, "");
+  // Google Patents는 한국 특허 앞 '10' 접두어를 제외한 번호 사용
+  // ex) 1020240168054 → KR20240168054A
+  const patentIdForGoogle = patentIdClean.startsWith("10")
+    ? patentIdClean.slice(2)
+    : patentIdClean;
+  const kiprisUrl = `https://doi.org/10.8080/${appNumClean}`;
+  const googlePatentsUrl = `https://patents.google.com/patent/KR${patentIdForGoogle}A`;
 
   return (
     <div className="border-b border-gray-100 last:border-b-0">
@@ -105,19 +113,33 @@ function PatentRow({ patent }: { patent: PatentResult }) {
                 </div>
               )}
 
-              {/* 메타 + KIPRIS 링크 */}
-              <div className="flex items-center gap-4 text-xs text-slate-400">
+              {/* 메타 */}
+              <div className="flex items-center gap-4 text-xs text-slate-400 mb-3">
                 <span>공개일 {pub.publication_date}</span>
                 <span>출원번호 {pub.application_number}</span>
+              </div>
+
+              {/* 외부 링크 버튼 2개 */}
+              <div className="grid grid-cols-2 gap-2">
                 <a
                   href={kiprisUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={(e) => e.stopPropagation()}
-                  className="flex items-center gap-1 text-blue-500 hover:text-blue-700 font-medium ml-auto"
+                  className="flex items-center justify-center gap-1.5 text-xs font-medium text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 rounded-lg px-3 py-2 transition-colors"
                 >
-                  KIPRIS 원문
-                  <ExternalLink className="w-3 h-3" />
+                  <ExternalLink className="w-3 h-3 shrink-0" />
+                  KIPRIS에서 보기
+                </a>
+                <a
+                  href={googlePatentsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center justify-center gap-1.5 text-xs font-medium text-slate-600 border border-slate-200 bg-slate-50 hover:bg-slate-100 rounded-lg px-3 py-2 transition-colors"
+                >
+                  <ExternalLink className="w-3 h-3 shrink-0" />
+                  Google Patents에서 보기
                 </a>
               </div>
             </div>

@@ -32,7 +32,7 @@ function buildReport(query: string, patents: PatentResult[], analysis: Analysis)
     "",
     "## 유사 특허 목록",
     ...patents.map((p) => {
-      const pct = Math.round(parseFloat(p.similarity_score) * 100);
+      const pct = Math.round(p.similarity_score * 100);
       return `- **${p.rank}위** | ${p.공개등록공보.title} | 유사도 ${pct}% | ${p.공개등록공보.application_number}`;
     }),
   ];
@@ -64,8 +64,10 @@ export default function ResultView({
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href     = url;
-    a.download = `patent_analysis_${query.slice(0, 20).replace(/\s/g, "_")}.md`;
+    a.download = `patent_analysis_${query.slice(0, 20).replace(/[\s/\\:*?"<>|]/g, "_")}.md`;
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
 

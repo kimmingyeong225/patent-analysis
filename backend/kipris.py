@@ -5,6 +5,47 @@ from config import KIPRIS_API_KEY
 # KIPRIS 특허/실용신안 무료 검색 서비스 URL (예시)
 KIPRIS_SEARCH_URL = "http://plus.kipris.or.kr/openapi/rest/patUtiModInfoSearchSevice/freeSearchInfo"
 
+def fetch_trend_data_from_kipris(query: str, count: int = 100) -> list:
+    """
+    트렌드 집계 전용. 최대 count건의 특허를 가져와 연도별 출원 건수를 반환합니다.
+    상세 파싱 없이 ApplicationDate만 추출해 빠르게 집계합니다.
+    """
+    params = {
+        "word": query,
+        "accessKey": KIPRIS_API_KEY,
+        "docsStart": "1",
+        "docsCount": str(count),
+    }
+    try:
+        response = requests.get(KIPRIS_SEARCH_URL, params=params, timeout=15)
+        if response.status_code != 200:
+            return []
+
+        xml_dict = xmltodict.parse(response.text)
+        items = (
+            xml_dict.get("response", {})
+            .get("body", {})
+            .get("items", {})
+            .get("PatentUtilityInfo", [])
+        )
+        if isinstance(items, dict):
+            items = [items]
+
+        year_counts: dict[str, int] = {}
+        for item in items:
+            date = item.get("ApplicationDate", "") or ""
+            if len(date) >= 4:
+                year = date[:4]
+                if year.isdigit():
+                    year_counts[year] = year_counts.get(year, 0) + 1
+
+        return [{"year": y, "count": c} for y, c in sorted(year_counts.items())]
+
+    except Exception as e:
+        print(f"Trend KIPRIS fetch error: {e}")
+        return []
+
+
 def fetch_patent_data_from_kipris(query: str):
     """
     KIPRIS API를 호출하여 특허 검색 결과를 XML에서 JSON(dict)으로 파싱

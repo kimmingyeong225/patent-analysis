@@ -86,7 +86,7 @@ def normalize_vectors(vectors: np.ndarray) -> np.ndarray:
 def build_faiss_index(chunks: list[dict]):
     """
     청크 리스트 → 임베딩 → 코사인 유사도 FAISS 인덱스 생성
-    반환: (index, chunks, vectors)
+    반환: (index, chunks)
     """
     texts = [c["text"] for c in chunks]
     

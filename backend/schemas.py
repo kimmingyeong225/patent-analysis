@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 class SearchRequest(BaseModel):
     query: str
@@ -80,7 +80,7 @@ class AnalyzeResponse(BaseModel):
     five_aspects: FiveAspects
     novelty_score: int
     novelty_reason: str
-    risk_level: str
+    risk_level: Literal["높음", "중간", "낮음"]
     risk_reason: str
     recommendation: str
 
