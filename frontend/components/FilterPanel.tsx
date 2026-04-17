@@ -10,7 +10,7 @@ const CURRENT_YEAR = new Date().getFullYear();
 const STATUS_OPTIONS = [
   { value: "",     label: "전체" },
   { value: "등록", label: "등록" },
-  { value: "���개", label: "공개" },
+  { value: "공개", label: "공개" },
   { value: "소멸", label: "소멸" },
 ];
 
@@ -125,7 +125,7 @@ export default function FilterPanel({ filters, onChange }: FilterPanelProps) {
                 </div>
               </div>
 
-              {/* 결과 개��� */}
+              {/* 결과 개수 */}
               <div>
                 <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">
                   결과 개수

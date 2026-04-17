@@ -46,7 +46,6 @@ async function fetchPatents(
   if (filters.year_to != null) body.year_to = filters.year_to;
   if (filters.status) body.status = filters.status;
   if (filters.max_results != null) body.max_results = filters.max_results;
-
   const res = await fetchWithTimeout(`${BACKEND_URL}/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
