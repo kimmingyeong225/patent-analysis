@@ -10,6 +10,7 @@ interface SearchBarProps {
   placeholder?: string;
   history?: string[];
   onRemoveHistory?: (query: string) => void;
+  onClearHistory?: () => void;
 }
 
 export default function SearchBar({
@@ -19,6 +20,7 @@ export default function SearchBar({
   placeholder = "분석할 아이디어를 입력하세요",
   history = [],
   onRemoveHistory,
+  onClearHistory,
 }: SearchBarProps) {
   const [value, setValue]     = useState(initialValue);
   const [focused, setFocused] = useState(false);
@@ -95,10 +97,21 @@ export default function SearchBar({
             isHero ? "mt-2" : "mt-1.5"
           }`}
         >
-          <div className="px-4 py-2 border-b border-gray-50">
+          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-50">
             <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
               최근 검색
             </span>
+            {onClearHistory && history.length > 0 && (
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={onClearHistory}
+                className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+                aria-label="검색 히스토리 전체 삭제"
+              >
+                전체 삭제
+              </button>
+            )}
           </div>
           {history.map((q) => (
             <div
@@ -115,9 +128,11 @@ export default function SearchBar({
               </button>
               {onRemoveHistory && (
                 <button
+                  type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => onRemoveHistory(q)}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-gray-500"
+                  className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-gray-300 hover:text-gray-500"
+                  aria-label={`검색 기록에서 "${q}" 삭제`}
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>

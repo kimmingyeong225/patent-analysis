@@ -16,6 +16,7 @@ interface HomeViewProps {
   onFiltersChange: (filters: SearchFilters) => void;
   history?: string[];
   onRemoveHistory?: (query: string) => void;
+  onClearHistory?: () => void;
 }
 
 export default function HomeView({
@@ -24,6 +25,7 @@ export default function HomeView({
   onFiltersChange,
   history = [],
   onRemoveHistory,
+  onClearHistory,
 }: HomeViewProps) {
   return (
     <main className="min-h-screen bg-white flex flex-col items-center justify-center px-4">
@@ -46,6 +48,7 @@ export default function HomeView({
           placeholder="분석할 아이디어를 입력하세요"
           history={history}
           onRemoveHistory={onRemoveHistory}
+          onClearHistory={onClearHistory}
         />
       </div>
 

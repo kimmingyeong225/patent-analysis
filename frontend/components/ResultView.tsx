@@ -1,11 +1,35 @@
 "use client";
 
+import { AlertTriangle, X } from "lucide-react";
 import StickyHeader from "./StickyHeader";
 import AISummaryWidget from "./AISummaryWidget";
 import PriorArtComparison from "./PriorArtComparison";
 import PatentList from "./PatentList";
 import TrendChart from "./TrendChart";
 import type { PatentResult, Analysis } from "@/lib/types";
+
+/* ── 에러 배너 ────────────────────────────────── */
+function ErrorBanner({ message, onDismiss }: { message: string; onDismiss?: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3"
+    >
+      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+      <p className="flex-1 text-sm text-amber-800">{message}</p>
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="shrink-0 text-amber-500 hover:text-amber-700 transition-colors"
+          aria-label="경고 닫기"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
+    </div>
+  );
+}
 
 function buildReport(query: string, patents: PatentResult[], analysis: Analysis): string {
   const lines = [
@@ -67,10 +91,15 @@ interface ResultViewProps {
   patents: PatentResult[];
   analysis: Analysis | null;
   analyzing?: boolean;
+  searchError?: string | null;
+  analysisError?: string | null;
+  onDismissSearchError?: () => void;
+  onDismissAnalysisError?: () => void;
   onSearch: (q: string) => void;
   onHome: () => void;
   history?: string[];
   onRemoveHistory?: (q: string) => void;
+  onClearHistory?: () => void;
 }
 
 export default function ResultView({
@@ -78,10 +107,15 @@ export default function ResultView({
   patents,
   analysis,
   analyzing = false,
+  searchError = null,
+  analysisError = null,
+  onDismissSearchError,
+  onDismissAnalysisError,
   onSearch,
   onHome,
   history = [],
   onRemoveHistory,
+  onClearHistory,
 }: ResultViewProps) {
   const handleDownload = () => {
     if (!analysis) return;
@@ -106,10 +140,19 @@ export default function ResultView({
         onLogoClick={onHome}
         history={history}
         onRemoveHistory={onRemoveHistory}
+        onClearHistory={onClearHistory}
       />
 
       {/* 메인 콘텐츠 */}
       <main className="max-w-3xl mx-auto px-4 py-8 space-y-6">
+        {/* 에러 배너 — 검색/분석 단계 실패 시 */}
+        {searchError && (
+          <ErrorBanner message={searchError} onDismiss={onDismissSearchError} />
+        )}
+        {analysisError && (
+          <ErrorBanner message={analysisError} onDismiss={onDismissAnalysisError} />
+        )}
+
         {/* ① AI 신규성 분석 위젯 — 로딩 중이면 스켈레톤 */}
         {analysis ? (
           <AISummaryWidget analysis={analysis} onDownload={handleDownload} />
