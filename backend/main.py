@@ -1,9 +1,20 @@
+import logging
+import os
+
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
-import os
-import models, schemas
+
+# 다른 모듈이 logger를 잡기 전에 루트 로깅 구성을 먼저 적용
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+import models, schemas, crud
+import config
 from database import engine, get_db, Base
 from kipris import fetch_patent_data_from_kipris, fetch_trend_data_from_kipris
 from mock_data import MOCK_SEARCH_RESPONSE
@@ -20,16 +31,18 @@ def _cache_put(cache: dict, key: str, value):
         oldest = next(iter(cache))
         del cache[oldest]
     cache[key] = value
-# 환경 변수 로드 (.env 파일)
+# 환경 변수 로드 (.env 파일) — config.py에서도 이미 로드하나 명시성 위해 유지
 load_dotenv()
+# 필수 env 누락 체크 (경고 레벨 — 실행은 계속)
+config.log_missing_env()
 # 데이터베이스 테이블 생성
 Base.metadata.create_all(bind=engine)
 app = FastAPI(title="특허 분석 시스템 API", version="1.0.0")
 
-# CORS 설정 추가
+# CORS 설정 — CORS_ORIGINS env로 제어 (기본 "*")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 실제 배포 시에는 특정 도메인으로 제한하는 것이 좋음
+    allow_origins=config.CORS_ORIGINS,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,38 +56,55 @@ def root():
 def search_patents(request: schemas.SearchRequest, db: Session = Depends(get_db)):
     """
     주어진 쿼리에 대해 KIPRIS API를 검색하고 결과를 반환합니다.
-    필터(출원연도 범위, 법적상태, 결과 수)를 적용하여 후처리합니다.
+
+    흐름:
+      1) USE_MOCK=true 이면 mock 경로
+      2) DB 영구 캐시 조회 (동일 query — 필터는 응답 직전에 후처리)
+      3) 캐시 miss → KIPRIS 호출 → FAISS 점수/정렬 → DB 저장(원본) → 필터/limit 후 응답
     """
     query = request.query
-    # 필터가 있으면 넉넉하게 가져와서 후처리
-    fetch_count = max(request.max_results * 4, 30)
 
+    # 1) USE_MOCK 우선 (DB를 우회)
     if os.getenv("USE_MOCK", "false").lower() == "true":
-        print("USE_MOCK=true -> mock 데이터 사용")
+        logger.info("USE_MOCK=true -> mock 데이터 사용")
         parsed_results = list(MOCK_SEARCH_RESPONSE["results"])
-    else:
-        parsed_results = fetch_patent_data_from_kipris(query, docs_count=fetch_count)
-        if not parsed_results:
-            print("Fallback to MOCK_DATA")
-            parsed_results = list(MOCK_SEARCH_RESPONSE["results"])
+        parsed_results = _apply_filters(parsed_results, request)
+        parsed_results = _apply_faiss_scores(parsed_results, query)
+        parsed_results = parsed_results[:request.max_results]
+        for i, p in enumerate(parsed_results):
+            p["rank"] = i + 1
+        return {"query": query, "cached": False, "results": parsed_results}
 
-    # ── 후처리 필터링 ──
-    parsed_results = _apply_filters(parsed_results, request)
+    # 2) DB 캐시 조회 (필터/max_results는 캐시 후처리로 적용됨)
+    cached = crud.get_cached_search(db, query, request)
+    if cached is not None:
+        logger.info("DB cache hit: %s", query)
+        return {"query": query, "cached": True, "results": cached}
 
-    # FAISS 코사인 유사도 점수 적용 및 정렬
+    # 3) 캐시 miss → KIPRIS 호출
+    logger.info("DB cache miss. Fetching from KIPRIS: %s", query)
+    fetch_count = max(request.max_results * 4, 30)
+    parsed_results = fetch_patent_data_from_kipris(query, docs_count=fetch_count)
+    if not parsed_results:
+        logger.warning("KIPRIS 결과 없음 → MOCK_DATA로 폴백")
+        parsed_results = list(MOCK_SEARCH_RESPONSE["results"])
+
+    # FAISS 유사도 점수 적용 및 정렬 (DB에는 필터 이전 원본을 저장)
     parsed_results = _apply_faiss_scores(parsed_results, query)
 
-    # 최대 결과 수 제한
+    # DB 영구 저장 — 저장 실패는 응답을 막지 않음 (사용자 요청은 계속 처리)
+    try:
+        crud.save_search_results(db, query, parsed_results)
+    except Exception as e:
+        logger.error("DB 저장 실패 (응답은 계속): %s", e)
+
+    # 응답 직전 필터/제한/rank 재부여
+    parsed_results = _apply_filters(parsed_results, request)
     parsed_results = parsed_results[:request.max_results]
-    # rank 재부여
     for i, p in enumerate(parsed_results):
         p["rank"] = i + 1
 
-    return {
-        "query": query,
-        "cached": False,
-        "results": parsed_results
-    }
+    return {"query": query, "cached": False, "results": parsed_results}
 
 
 def _apply_filters(patents: list, request: schemas.SearchRequest) -> list:
@@ -109,9 +139,15 @@ def _apply_filters(patents: list, request: schemas.SearchRequest) -> list:
 @app.get("/patent/{patent_id}")
 def get_patent_detail(patent_id: str, db: Session = Depends(get_db)):
     """
-    단일 특허 상세 조회
-    초반 뼈대용으로 반환 폼만 구성
+    단일 특허 상세 조회.
+    1) /search가 채운 DB 우선 조회
+    2) 없으면 mock 데이터에서 폴백 조회
     """
+    patent = db.query(models.Patent).filter(models.Patent.patent_id == patent_id).first()
+    if patent:
+        item = crud.db_row_to_search_result_item(patent)
+        return {"patent_id": patent_id, "공개등록공보": item["공개등록공보"]}
+
     for result in MOCK_SEARCH_RESPONSE["results"]:
         if result["공개등록공보"]["patent_id"] == patent_id:
             return {
@@ -143,11 +179,11 @@ def get_trend(query: str):
     동일 쿼리는 메모리 캐시를 재사용합니다.
     """
     if query in _trend_cache:
-        print(f"Trend cache hit: {query}")
+        logger.info("Trend cache hit: %s", query)
         cached = _trend_cache[query]
         return {"query": query, "trend_data": cached["trend_data"], "is_truncated": cached["is_truncated"]}
 
-    print(f"Trend cache miss. Fetching from KIPRIS: {query}")
+    logger.info("Trend cache miss. Fetching from KIPRIS: %s", query)
     result = fetch_trend_data_from_kipris(query)
     _cache_put(_trend_cache, query, result)
 
@@ -195,7 +231,7 @@ def _apply_faiss_scores(patents: list, query: str) -> list:
             patent["rank"] = i + 1
 
     except Exception as e:
-        print(f"FAISS 유사도 계산 실패, 기본 순서 유지: {e}")
+        logger.error("FAISS 유사도 계산 실패, 기본 순서 유지: %s", e)
 
     return patents
 
