@@ -210,3 +210,4 @@ __marimo__/
 # Next.js
 frontend/.next/
 frontend/node_modules/
+*.tsbuildinfo
