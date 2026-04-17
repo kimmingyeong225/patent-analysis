@@ -99,7 +99,7 @@ def build_faiss_index(chunks: list[dict]):
     index = faiss.IndexFlatIP(dim)
     index.add(vectors)
     
-    print(f"✅ FAISS 인덱스 생성 완료! 저장된 청크 수: {index.ntotal}")
+    print(f"[FAISS] 인덱스 생성 완료! 저장된 청크 수: {index.ntotal}")
     return index, chunks
 
 
@@ -143,7 +143,7 @@ if __name__ == "__main__":
     query = "태양광 충전 웨어러블 기기"
     results = search_similar(query, index, chunks, top_k=3)
 
-    print(f"\n🔍 '{query}' 유사 특허 TOP 3:")
+    print(f"\n[검색] '{query}' 유사 특허 TOP 3:")
     for r in results:
         print(f"  {r['rank']}위: [{r['patent_id']}] {r['section']} "
               f"(유사도: {r['similarity_score']})")

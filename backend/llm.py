@@ -109,6 +109,7 @@ def analyze_novelty(user_idea: str, patents: list, model: str = "gpt-4o") -> dic
         patent_summary=patent_summary,
     )
 
+    raw = ""
     try:
         response = client.chat.completions.create(
             model=model,

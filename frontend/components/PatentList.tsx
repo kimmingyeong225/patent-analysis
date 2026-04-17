@@ -33,7 +33,7 @@ function PatentRow({ patent }: { patent: PatentResult }) {
   const pct = Math.round(patent.similarity_score * 100);
   const { text, bg, border } = scoreStyle(pct);
   const appNumClean = pub.application_number.replace(/-/g, "");
-  const patentIdClean = pub.patent_id.replace(/-/g, "");
+  const patentIdClean = pub.patent_id?.replace(/-/g, "") || "";
   // Google Patents는 한국 특허 앞 '10' 접두어를 제외한 번호 사용
   // ex) 1020240168054 → KR20240168054A
   const patentIdForGoogle = patentIdClean.startsWith("10")
@@ -115,7 +115,7 @@ function PatentRow({ patent }: { patent: PatentResult }) {
 
               {/* 메타 */}
               <div className="flex items-center gap-4 text-xs text-slate-400 mb-3">
-                <span>공개일 {pub.publication_date}</span>
+                <span>공개일 {pub.publication_date ?? "미정"}</span>
                 <span>출원번호 {pub.application_number}</span>
               </div>
 
@@ -163,7 +163,7 @@ export default function PatentList({ patents }: PatentListProps) {
       </h2>
       <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
         {patents.map((p) => (
-          <PatentRow key={p.rank} patent={p} />
+          <PatentRow key={p.공개등록공보.application_number} patent={p} />
         ))}
       </div>
     </section>

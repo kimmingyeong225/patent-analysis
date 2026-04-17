@@ -39,10 +39,34 @@ function buildReport(query: string, patents: PatentResult[], analysis: Analysis)
   return lines.join("\n");
 }
 
+/* ── 분석 스켈레톤 ────────────────────────────── */
+function AnalysisSkeleton() {
+  return (
+    <section className="bg-blue-50 border border-blue-100 rounded-2xl p-6 animate-pulse">
+      <div className="flex items-center gap-2 mb-4">
+        <div className="w-6 h-6 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
+        <span className="text-sm font-semibold text-blue-500">
+          AI 신규성 분석 중…
+        </span>
+      </div>
+      <div className="space-y-3">
+        <div className="h-4 bg-blue-100 rounded w-3/4" />
+        <div className="h-4 bg-blue-100 rounded w-1/2" />
+        <div className="h-4 bg-blue-100 rounded w-5/6" />
+        <div className="h-4 bg-blue-100 rounded w-2/3" />
+      </div>
+      <p className="text-xs text-blue-400 mt-4">
+        GPT-4o가 선행특허를 비교 분석하고 있습니다. 보통 10~20초 소요됩니다.
+      </p>
+    </section>
+  );
+}
+
 interface ResultViewProps {
   query: string;
   patents: PatentResult[];
-  analysis: Analysis;
+  analysis: Analysis | null;
+  analyzing?: boolean;
   onSearch: (q: string) => void;
   onHome: () => void;
   history?: string[];
@@ -53,12 +77,14 @@ export default function ResultView({
   query,
   patents,
   analysis,
+  analyzing = false,
   onSearch,
   onHome,
   history = [],
   onRemoveHistory,
 }: ResultViewProps) {
   const handleDownload = () => {
+    if (!analysis) return;
     const md  = buildReport(query, patents, analysis);
     const blob = new Blob([md], { type: "text/markdown" });
     const url  = URL.createObjectURL(blob);
@@ -84,13 +110,19 @@ export default function ResultView({
 
       {/* 메인 콘텐츠 */}
       <main className="max-w-3xl mx-auto px-4 py-8 space-y-6">
-        {/* ① AI 신규성 분석 위젯 */}
-        <AISummaryWidget analysis={analysis} onDownload={handleDownload} />
+        {/* ① AI 신규성 분석 위젯 — 로딩 중이면 스켈레톤 */}
+        {analysis ? (
+          <AISummaryWidget analysis={analysis} onDownload={handleDownload} />
+        ) : analyzing ? (
+          <AnalysisSkeleton />
+        ) : null}
 
-        {/* ② 선행특허별 상세 비교 */}
-        <PriorArtComparison comparisons={analysis.prior_art_comparison} />
+        {/* ② 선행특허별 상세 비교 — 분석 완료 후에만 표시 */}
+        {analysis && (
+          <PriorArtComparison comparisons={analysis.prior_art_comparison} />
+        )}
 
-        {/* ③ 유사 특허 리스트 */}
+        {/* ③ 유사 특허 리스트 — 항상 먼저 표시 */}
         <PatentList patents={patents} />
 
         {/* ④ 연도별 트렌드 차트 */}

@@ -7,7 +7,7 @@ class SearchResult(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     query = Column(String, index=True)
-    patent_id = Column(String, index=True)
+    patent_id = Column(String, ForeignKey("patents.patent_id"), index=True)
     rank = Column(Integer)
     similarity_score = Column(Float)
 

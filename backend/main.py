@@ -9,10 +9,17 @@ from kipris import fetch_patent_data_from_kipris, fetch_trend_data_from_kipris
 from mock_data import MOCK_SEARCH_RESPONSE
 import llm
 
-# FAISS 인덱스 메모리 캐시 — 동일 쿼리 재요청 시 임베딩 API 재호출 방지
+# 메모리 캐시 — 동일 쿼리 재요청 시 API 재호출 방지 (최대 50개, 초과 시 오래된 항목 삭제)
+_CACHE_MAX = 50
 _faiss_cache: dict = {}  # { query: (index, chunks) }
-# 트렌드 메모리 캐시 — 동일 쿼리 재요청 시 KIPRIS API 재호출 방지
-_trend_cache: dict = {}  # { query: trend_data }
+_trend_cache: dict = {}  # { query: { trend_data, is_truncated } }
+
+def _cache_put(cache: dict, key: str, value):
+    """캐시에 항목 추가. 최대 크기 초과 시 가장 오래된 항목 삭제."""
+    if key not in cache and len(cache) >= _CACHE_MAX:
+        oldest = next(iter(cache))
+        del cache[oldest]
+    cache[key] = value
 # 환경 변수 로드 (.env 파일)
 load_dotenv()
 # 데이터베이스 테이블 생성
@@ -36,27 +43,69 @@ def root():
 def search_patents(request: schemas.SearchRequest, db: Session = Depends(get_db)):
     """
     주어진 쿼리에 대해 KIPRIS API를 검색하고 결과를 반환합니다.
-    초기 뼈대: KIPRIS 검색 후 결과를 바로 반환 (캐싱/DB 저장 로직은 확장 가능)
+    필터(출원연도 범위, 법적상태, 결과 수)를 적용하여 후처리합니다.
     """
     query = request.query
+    # 필터가 있으면 넉넉하게 가져와서 후처리
+    fetch_count = max(request.max_results * 4, 30)
 
     if os.getenv("USE_MOCK", "false").lower() == "true":
-        print("USE_MOCK=true → mock 데이터 사용")
+        print("USE_MOCK=true -> mock 데이터 사용")
         parsed_results = list(MOCK_SEARCH_RESPONSE["results"])
     else:
-        parsed_results = fetch_patent_data_from_kipris(query)
+        parsed_results = fetch_patent_data_from_kipris(query, docs_count=fetch_count)
         if not parsed_results:
             print("Fallback to MOCK_DATA")
             parsed_results = list(MOCK_SEARCH_RESPONSE["results"])
 
+    # ── 후처리 필터링 ──
+    parsed_results = _apply_filters(parsed_results, request)
+
     # FAISS 코사인 유사도 점수 적용 및 정렬
     parsed_results = _apply_faiss_scores(parsed_results, query)
+
+    # 최대 결과 수 제한
+    parsed_results = parsed_results[:request.max_results]
+    # rank 재부여
+    for i, p in enumerate(parsed_results):
+        p["rank"] = i + 1
 
     return {
         "query": query,
         "cached": False,
         "results": parsed_results
     }
+
+
+def _apply_filters(patents: list, request: schemas.SearchRequest) -> list:
+    """출원연도 범위, 법적상태 필터를 적용합니다."""
+    filtered = patents
+
+    # 출원연도 필터
+    if request.year_from or request.year_to:
+        def in_year_range(p):
+            date = p.get("공개등록공보", {}).get("application_date", "") or ""
+            if len(date) < 4:
+                return False
+            try:
+                year = int(date[:4])
+            except ValueError:
+                return False
+            if request.year_from and year < request.year_from:
+                return False
+            if request.year_to and year > request.year_to:
+                return False
+            return True
+        filtered = [p for p in filtered if in_year_range(p)]
+
+    # 법적상태 필터
+    if request.status:
+        filtered = [
+            p for p in filtered
+            if p.get("법적상태", {}).get("status", "") == request.status
+        ]
+
+    return filtered
 @app.get("/patent/{patent_id}")
 def get_patent_detail(patent_id: str, db: Session = Depends(get_db)):
     """
@@ -90,18 +139,19 @@ def analyze_patent(request: schemas.AnalyzeRequest):
 def get_trend(query: str):
     """
     키워드별 연도별 출원 트렌드.
-    KIPRIS에서 최대 100건을 가져와 출원연도별 실제 건수를 집계합니다.
+    KIPRIS에서 최대 500건을 페이지네이션하여 출원연도별 실제 건수를 집계합니다.
     동일 쿼리는 메모리 캐시를 재사용합니다.
     """
     if query in _trend_cache:
         print(f"Trend cache hit: {query}")
-        return {"query": query, "trend_data": _trend_cache[query]}
+        cached = _trend_cache[query]
+        return {"query": query, "trend_data": cached["trend_data"], "is_truncated": cached["is_truncated"]}
 
     print(f"Trend cache miss. Fetching from KIPRIS: {query}")
-    trend_data = fetch_trend_data_from_kipris(query)
-    _trend_cache[query] = trend_data
+    result = fetch_trend_data_from_kipris(query)
+    _cache_put(_trend_cache, query, result)
 
-    return {"query": query, "trend_data": trend_data}
+    return {"query": query, "trend_data": result["trend_data"], "is_truncated": result["is_truncated"]}
 
 # ──────────────── 유사도 검색 엔드포인트 (팀원 2 추가) ────────────────
 
@@ -122,7 +172,7 @@ def _apply_faiss_scores(patents: list, query: str) -> list:
             if not chunks:
                 return patents
             index, chunks = build_faiss_index(chunks)
-            _faiss_cache[query] = (index, chunks)
+            _cache_put(_faiss_cache, query, (index, chunks))
 
         chunk_results = search_similar(query, index, chunks, top_k=len(chunks))
 
@@ -164,7 +214,7 @@ def similarity_search(request: schemas.SimilarityRequest):
     else:
         kipris_results = fetch_patent_data_from_kipris(query)
         if not kipris_results:
-            kipris_results = MOCK_SEARCH_RESPONSE["results"]
+            kipris_results = list(MOCK_SEARCH_RESPONSE["results"])
 
     # 2. FAISS 인덱스 (캐시 재사용)
     if query in _faiss_cache:
@@ -173,7 +223,7 @@ def similarity_search(request: schemas.SimilarityRequest):
         chunks = chunk_patents(kipris_results)
         if chunks:
             index, chunks = build_faiss_index(chunks)
-            _faiss_cache[query] = (index, chunks)
+            _cache_put(_faiss_cache, query, (index, chunks))
         else:
             return {"query": query, "total_chunks": 0, "results": []}
 

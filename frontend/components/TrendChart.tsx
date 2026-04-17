@@ -8,8 +8,7 @@ import {
   ResponsiveContainer, Cell,
 } from "recharts";
 import { Search, TrendingUp, TrendingDown, Minus } from "lucide-react";
-
-const BACKEND_URL = "http://localhost:8000";
+import { BACKEND_URL } from "@/lib/constants";
 
 type TrendPoint = { year: string; count: number };
 type ChartType = "막대" | "라인";
@@ -51,6 +50,7 @@ export default function TrendChart({ initialKeyword }: TrendChartProps) {
   const [keyword, setKeyword]     = useState(initialKeyword);
   const [displayed, setDisplayed] = useState(initialKeyword);
   const [data, setData]           = useState<TrendPoint[]>([]);
+  const [isTruncated, setIsTruncated] = useState(false);
   const [loading, setLoading]     = useState(false);
   const [fetchError, setFetchError] = useState(false);
   const [chartType, setChartType] = useState<ChartType>("막대");
@@ -68,6 +68,7 @@ export default function TrendChart({ initialKeyword }: TrendChartProps) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       setData(json.trend_data ?? []);
+      setIsTruncated(json.is_truncated ?? false);
       setDisplayed(trimmed);
     } catch (e) {
       console.error("Trend fetch error:", e);
@@ -177,7 +178,7 @@ export default function TrendChart({ initialKeyword }: TrendChartProps) {
             <div className="grid grid-cols-3 gap-3">
               <MetricCard
                 label="총 출원 건수"
-                value={`${totalCount.toLocaleString()}건`}
+                value={isTruncated ? `${totalCount.toLocaleString()}건+` : `${totalCount.toLocaleString()}건`}
               />
               <MetricCard
                 label="최고 출원 연도"

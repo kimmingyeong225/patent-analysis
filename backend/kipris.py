@@ -5,62 +5,77 @@ from config import KIPRIS_API_KEY
 # KIPRIS 특허/실용신안 무료 검색 서비스 URL (예시)
 KIPRIS_SEARCH_URL = "http://plus.kipris.or.kr/openapi/rest/patUtiModInfoSearchSevice/freeSearchInfo"
 
-def fetch_trend_data_from_kipris(query: str, count: int = 100) -> list:
+def fetch_trend_data_from_kipris(query: str, max_count: int = 500) -> dict:
     """
-    트렌드 집계 전용. 최대 count건의 특허를 가져와 연도별 출원 건수를 반환합니다.
-    상세 파싱 없이 ApplicationDate만 추출해 빠르게 집계합니다.
+    트렌드 집계 전용. KIPRIS API를 페이지네이션하여 최대 max_count건을 수집하고
+    연도별 출원 건수를 반환합니다. (API 1회 최대 100건이므로 여러 번 호출)
+    반환값: { "trend_data": [...], "is_truncated": bool }
+      - is_truncated=True  → max_count 한계에 도달 (실제 건수는 더 많을 수 있음)
+      - is_truncated=False → 전체 결과를 모두 수집함
     """
-    params = {
-        "word": query,
-        "accessKey": KIPRIS_API_KEY,
-        "docsStart": "1",
-        "docsCount": str(count),
-    }
+    PAGE_SIZE = 100
+    year_counts: dict[str, int] = {}
+    fetched = 0
+
     try:
-        response = requests.get(KIPRIS_SEARCH_URL, params=params, timeout=15)
-        if response.status_code != 200:
-            return []
+        for page in range(max_count // PAGE_SIZE):
+            params = {
+                "word": query,
+                "accessKey": KIPRIS_API_KEY,
+                "docsStart": str(page * PAGE_SIZE + 1),
+                "docsCount": str(PAGE_SIZE),
+            }
+            response = requests.get(KIPRIS_SEARCH_URL, params=params, timeout=15)
+            if response.status_code != 200:
+                break
 
-        xml_dict = xmltodict.parse(response.text)
-        items = (
-            xml_dict.get("response", {})
-            .get("body", {})
-            .get("items", {})
-            .get("PatentUtilityInfo", [])
-        )
-        if isinstance(items, dict):
-            items = [items]
+            xml_dict = xmltodict.parse(response.text)
+            items = (
+                xml_dict.get("response", {})
+                .get("body", {})
+                .get("items", {})
+                .get("PatentUtilityInfo", [])
+            )
+            if isinstance(items, dict):
+                items = [items]
+            if not items:
+                break  # 더 이상 결과 없음
 
-        year_counts: dict[str, int] = {}
-        for item in items:
-            date = item.get("ApplicationDate", "") or ""
-            if len(date) >= 4:
-                year = date[:4]
-                if year.isdigit():
-                    year_counts[year] = year_counts.get(year, 0) + 1
+            for item in items:
+                date = item.get("ApplicationDate", "") or ""
+                if len(date) >= 4:
+                    year = date[:4]
+                    if year.isdigit():
+                        year_counts[year] = year_counts.get(year, 0) + 1
 
-        return [{"year": y, "count": c} for y, c in sorted(year_counts.items())]
+            fetched += len(items)
+            if len(items) < PAGE_SIZE:
+                break  # 마지막 페이지 도달
+
+        trend_data = [{"year": y, "count": c} for y, c in sorted(year_counts.items())]
+        return {"trend_data": trend_data, "is_truncated": fetched >= max_count}
 
     except Exception as e:
         print(f"Trend KIPRIS fetch error: {e}")
-        return []
+        return {"trend_data": [], "is_truncated": False}
 
 
-def fetch_patent_data_from_kipris(query: str):
+def fetch_patent_data_from_kipris(query: str, docs_count: int = 30):
     """
-    KIPRIS API를 호출하여 특허 검색 결과를 XML에서 JSON(dict)으로 파싱
+    KIPRIS API를 호출하여 특허 검색 결과를 XML에서 JSON(dict)으로 파싱.
+    docs_count: KIPRIS에서 가져올 최대 건수 (필터링 전 모수, 기본 30건)
     """
     params = {
         "word": query,
         "accessKey": KIPRIS_API_KEY,
         "docsStart": "1",
-        "docsCount": "5" # 상위 5개 정도만 가져오기
+        "docsCount": str(docs_count),
     }
-    
+
     try:
-        response = requests.get(KIPRIS_SEARCH_URL, params=params)
+        response = requests.get(KIPRIS_SEARCH_URL, params=params, timeout=15)
         response.raise_for_status() # 오류 발생시 예외 처리
-        
+
         # XML to Dictionary 변환
         xml_dict = xmltodict.parse(response.text)
         return parse_kipris_dict_to_json(xml_dict)
@@ -98,7 +113,7 @@ def parse_kipris_dict_to_json(xml_dict: dict):
             # 특허실용행정처분 -> 법적상태.status
             
             patent_id = item.get('OpeningNumber', '') or item.get('RegistrationNumber', '') or f"UNKNOWN-{idx}"
-            ipc_codes = item.get('InternationalpatentclassificationNumber', '').split('|')
+            ipc_codes = (item.get('InternationalpatentclassificationNumber') or '').split('|')
             ipc_list = [{"code": code.strip(), "desc": ""} for code in ipc_codes if code.strip()]
 
             mapped_item = {

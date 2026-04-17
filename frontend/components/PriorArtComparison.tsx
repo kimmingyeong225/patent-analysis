@@ -80,6 +80,7 @@ interface PriorArtComparisonProps {
 export default function PriorArtComparison({ comparisons }: PriorArtComparisonProps) {
   if (!comparisons || comparisons.length === 0) return null;
 
+
   return (
     <section className="animate-slide-up">
       <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest font-mono mb-3">

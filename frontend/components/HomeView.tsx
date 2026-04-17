@@ -1,6 +1,8 @@
 "use client";
 
 import SearchBar from "./SearchBar";
+import FilterPanel from "./FilterPanel";
+import type { SearchFilters } from "@/lib/types";
 
 const EXAMPLE_CHIPS = [
   "자가 충전형 스마트 워치 스트랩",
@@ -10,11 +12,19 @@ const EXAMPLE_CHIPS = [
 
 interface HomeViewProps {
   onSearch: (query: string) => void;
+  filters: SearchFilters;
+  onFiltersChange: (filters: SearchFilters) => void;
   history?: string[];
   onRemoveHistory?: (query: string) => void;
 }
 
-export default function HomeView({ onSearch, history = [], onRemoveHistory }: HomeViewProps) {
+export default function HomeView({
+  onSearch,
+  filters,
+  onFiltersChange,
+  history = [],
+  onRemoveHistory,
+}: HomeViewProps) {
   return (
     <main className="min-h-screen bg-white flex flex-col items-center justify-center px-4">
       {/* 로고 */}
@@ -33,10 +43,15 @@ export default function HomeView({ onSearch, history = [], onRemoveHistory }: Ho
         <SearchBar
           size="hero"
           onSearch={onSearch}
-          placeholder="분석할 아이디어를 입력하세요  —  예: 자가 충전형 스마트 워치 스트랩"
+          placeholder="분석할 아이디어를 입력하세요"
           history={history}
           onRemoveHistory={onRemoveHistory}
         />
+      </div>
+
+      {/* 필터 패널 */}
+      <div className="mt-4 w-full max-w-2xl flex justify-center animate-fade-in">
+        <FilterPanel filters={filters} onChange={onFiltersChange} />
       </div>
 
       {/* 예시 칩 */}

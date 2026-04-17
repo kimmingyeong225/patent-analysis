@@ -5,7 +5,7 @@ export interface Publication {
   inventor: string;
   application_number: string;
   application_date: string;
-  publication_date: string;
+  publication_date?: string | null;
   registration_date?: string | null;
   doc_type: string;
   abstract: string;
@@ -16,7 +16,7 @@ export interface LegalStatus {
   status: string;
   status_code: string;
   last_event: string;
-  last_event_date: string;
+  last_event_date?: string | null;
   is_alive: boolean;
 }
 
@@ -76,6 +76,13 @@ export interface Analysis {
 export interface SearchResponse {
   results: PatentResult[];
   cached: boolean;
+}
+
+export interface SearchFilters {
+  year_from?: number | null;
+  year_to?: number | null;
+  status?: string | null;
+  max_results?: number;
 }
 
 export type ViewState = "home" | "loading" | "results";
