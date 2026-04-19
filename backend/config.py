@@ -18,6 +18,20 @@ CORS_ORIGINS = [
     o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()
 ] or ["*"]
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 레이트 리밋 (slowapi) — IP 기준, 엔드포인트별 개별 한도
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 포맷은 slowapi 표기법: "N/second|minute|hour|day" 또는 "N per <unit>"
+# 배포 환경에서 쿼터/비용 상황에 맞게 env로 오버라이드.
+# - /analyze  : OpenAI GPT-4o 1회/요청 (비용↑) → 타이트
+# - /search   : KIPRIS 최대 6회/요청 (월 1000회 무료 한도)
+# - /similarity: OpenAI 임베딩 호출 포함
+# - /trend    : KIPRIS 페이지네이션 (상대적으로 가벼움)
+RATE_LIMIT_SEARCH = os.getenv("RATE_LIMIT_SEARCH", "30/minute")
+RATE_LIMIT_ANALYZE = os.getenv("RATE_LIMIT_ANALYZE", "10/minute")
+RATE_LIMIT_TREND = os.getenv("RATE_LIMIT_TREND", "60/minute")
+RATE_LIMIT_SIMILARITY = os.getenv("RATE_LIMIT_SIMILARITY", "20/minute")
+
 
 def log_missing_env() -> list[str]:
     """필수 API 키 누락 시 경고 로깅. 실행은 계속(mock/fallback 경로 있으므로)."""

@@ -1,10 +1,14 @@
 import logging
 import os
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 # 다른 모듈이 logger를 잡기 전에 루트 로깅 구성을 먼저 적용
 logging.basicConfig(
@@ -39,6 +43,14 @@ config.log_missing_env()
 Base.metadata.create_all(bind=engine)
 app = FastAPI(title="특허 분석 시스템 API", version="1.0.0")
 
+# 레이트 리밋 — IP 기준. 엔드포인트별 한도는 config.RATE_LIMIT_* env로 오버라이드 가능.
+# - headers_enabled=True : 429 응답에 Retry-After + X-RateLimit-* 헤더 주입 (클라이언트 backoff 용)
+# - SlowAPIMiddleware : FastAPI 응답이 Response 객체로 완성된 뒤 헤더를 안전하게 추가
+limiter = Limiter(key_func=get_remote_address, headers_enabled=True)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
 # CORS 설정 — CORS_ORIGINS env로 제어 (기본 "*")
 app.add_middleware(
     CORSMiddleware,
@@ -53,7 +65,13 @@ def root():
     return {"message": "특허 분석 서버 작동 중!"}
 # ---------------------------------------------------------------------
 @app.post("/search", response_model=schemas.SearchResponse)
-def search_patents(request: schemas.SearchRequest, db: Session = Depends(get_db)):
+@limiter.limit(config.RATE_LIMIT_SEARCH)
+def search_patents(
+    request: Request,
+    response: Response,
+    payload: schemas.SearchRequest,
+    db: Session = Depends(get_db),
+):
     """
     주어진 쿼리에 대해 KIPRIS API를 검색하고 결과를 반환합니다.
 
@@ -62,28 +80,28 @@ def search_patents(request: schemas.SearchRequest, db: Session = Depends(get_db)
       2) DB 영구 캐시 조회 (동일 query — 필터는 응답 직전에 후처리)
       3) 캐시 miss → KIPRIS 호출 → FAISS 점수/정렬 → DB 저장(원본) → 필터/limit 후 응답
     """
-    query = request.query
+    query = payload.query
 
     # 1) USE_MOCK 우선 (DB를 우회)
     if os.getenv("USE_MOCK", "false").lower() == "true":
         logger.info("USE_MOCK=true -> mock 데이터 사용")
         parsed_results = list(MOCK_SEARCH_RESPONSE["results"])
-        parsed_results = _apply_filters(parsed_results, request)
+        parsed_results = _apply_filters(parsed_results, payload)
         parsed_results = _apply_faiss_scores(parsed_results, query)
-        parsed_results = parsed_results[:request.max_results]
+        parsed_results = parsed_results[:payload.max_results]
         for i, p in enumerate(parsed_results):
             p["rank"] = i + 1
         return {"query": query, "cached": False, "results": parsed_results}
 
     # 2) DB 캐시 조회 (필터/max_results는 캐시 후처리로 적용됨)
-    cached = crud.get_cached_search(db, query, request)
+    cached = crud.get_cached_search(db, query, payload)
     if cached is not None:
         logger.info("DB cache hit: %s", query)
         return {"query": query, "cached": True, "results": cached}
 
     # 3) 캐시 miss → KIPRIS 호출
     logger.info("DB cache miss. Fetching from KIPRIS: %s", query)
-    fetch_count = max(request.max_results * 4, 30)
+    fetch_count = max(payload.max_results * 4, 30)
     parsed_results = fetch_patent_data_from_kipris(query, docs_count=fetch_count)
     if not parsed_results:
         logger.warning("KIPRIS 결과 없음 → MOCK_DATA로 폴백")
@@ -99,8 +117,8 @@ def search_patents(request: schemas.SearchRequest, db: Session = Depends(get_db)
         logger.error("DB 저장 실패 (응답은 계속): %s", e)
 
     # 응답 직전 필터/제한/rank 재부여
-    parsed_results = _apply_filters(parsed_results, request)
-    parsed_results = parsed_results[:request.max_results]
+    parsed_results = _apply_filters(parsed_results, payload)
+    parsed_results = parsed_results[:payload.max_results]
     for i, p in enumerate(parsed_results):
         p["rank"] = i + 1
 
@@ -158,12 +176,13 @@ def get_patent_detail(patent_id: str, db: Session = Depends(get_db)):
     raise HTTPException(status_code=404, detail="Patent not found")
 
 @app.post("/analyze", response_model=schemas.AnalyzeResponse)
-def analyze_patent(request: schemas.AnalyzeRequest):
+@limiter.limit(config.RATE_LIMIT_ANALYZE)
+def analyze_patent(request: Request, response: Response, payload: schemas.AnalyzeRequest):
     """
     사용자 아이디어와 유사 특허 리스트를 받아 GPT-4o로 신규성 분석을 수행합니다.
     """
-    patents_as_dict = [p.model_dump() for p in request.patents]
-    result = llm.analyze_novelty(request.user_idea, patents_as_dict)
+    patents_as_dict = [p.model_dump() for p in payload.patents]
+    result = llm.analyze_novelty(payload.user_idea, patents_as_dict)
 
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
@@ -172,7 +191,8 @@ def analyze_patent(request: schemas.AnalyzeRequest):
 
 
 @app.get("/trend")
-def get_trend(query: str):
+@limiter.limit(config.RATE_LIMIT_TREND)
+def get_trend(request: Request, response: Response, query: str):
     """
     키워드별 연도별 출원 트렌드.
     KIPRIS에서 최대 500건을 페이지네이션하여 출원연도별 실제 건수를 집계합니다.
@@ -237,12 +257,13 @@ def _apply_faiss_scores(patents: list, query: str) -> list:
 
 
 @app.post("/similarity", response_model=schemas.SimilarityResponse)
-def similarity_search(request: schemas.SimilarityRequest):
+@limiter.limit(config.RATE_LIMIT_SIMILARITY)
+def similarity_search(request: Request, response: Response, payload: schemas.SimilarityRequest):
     """
     사용자 쿼리 → KIPRIS 실제 데이터 → 청킹 → OpenAI 임베딩 → 코사인 유사도 FAISS → TOP K 반환
     """
-    query = request.query
-    top_k = request.top_k
+    query = payload.query
+    top_k = payload.top_k
 
     # 1. KIPRIS에서 실제 특허 데이터 가져오기
     if os.getenv("USE_MOCK", "false").lower() == "true":
