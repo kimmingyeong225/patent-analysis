@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ExternalLink } from "lucide-react";
+import { ChevronDown, ExternalLink, Info } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { PatentResult } from "@/lib/types";
+import PatentDetailModal from "./PatentDetailModal";
 
 /* ── 유사도 색상 ──────────────────────────────── */
 function scoreStyle(pct: number) {
@@ -27,7 +28,13 @@ function StatusBadge({ status, isAlive }: { status: string; isAlive: boolean }) 
 }
 
 /* ── 특허 한 행 ────────────────────────────────── */
-function PatentRow({ patent }: { patent: PatentResult }) {
+function PatentRow({
+  patent,
+  onOpenDetail,
+}: {
+  patent: PatentResult;
+  onOpenDetail: (p: PatentResult) => void;
+}) {
   const [open, setOpen] = useState(false);
   const pub = patent.공개등록공보;
   const pct = Math.round(patent.similarity_score * 100);
@@ -119,8 +126,19 @@ function PatentRow({ patent }: { patent: PatentResult }) {
                 <span>출원번호 {pub.application_number}</span>
               </div>
 
-              {/* 외부 링크 버튼 2개 */}
-              <div className="grid grid-cols-2 gap-2">
+              {/* 외부 링크 + 상세 모달 버튼 */}
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenDetail(patent);
+                  }}
+                  className="flex items-center justify-center gap-1.5 text-xs font-medium text-indigo-600 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 rounded-lg px-3 py-2 transition-colors"
+                >
+                  <Info className="w-3 h-3 shrink-0" />
+                  상세 보기
+                </button>
                 <a
                   href={kiprisUrl}
                   target="_blank"
@@ -129,7 +147,7 @@ function PatentRow({ patent }: { patent: PatentResult }) {
                   className="flex items-center justify-center gap-1.5 text-xs font-medium text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 rounded-lg px-3 py-2 transition-colors"
                 >
                   <ExternalLink className="w-3 h-3 shrink-0" />
-                  KIPRIS에서 보기
+                  KIPRIS
                 </a>
                 <a
                   href={googlePatentsUrl}
@@ -139,7 +157,7 @@ function PatentRow({ patent }: { patent: PatentResult }) {
                   className="flex items-center justify-center gap-1.5 text-xs font-medium text-slate-600 border border-slate-200 bg-slate-50 hover:bg-slate-100 rounded-lg px-3 py-2 transition-colors"
                 >
                   <ExternalLink className="w-3 h-3 shrink-0" />
-                  Google Patents에서 보기
+                  Google Patents
                 </a>
               </div>
             </div>
@@ -156,16 +174,33 @@ interface PatentListProps {
 }
 
 export default function PatentList({ patents }: PatentListProps) {
+  const [detail, setDetail] = useState<PatentResult | null>(null);
+
   return (
     <section className="animate-slide-up">
       <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest font-mono mb-3">
         유사 특허 {patents.length}건
       </h2>
-      <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
-        {patents.map((p) => (
-          <PatentRow key={p.공개등록공보.application_number} patent={p} />
-        ))}
-      </div>
+      {patents.length === 0 ? (
+        <div className="bg-white border border-dashed border-gray-200 rounded-2xl p-8 text-center">
+          <p className="text-sm text-slate-500">검색 결과가 없습니다.</p>
+          <p className="text-xs text-slate-400 mt-1">
+            필터를 완화하거나 다른 키워드로 시도해 보세요.
+          </p>
+        </div>
+      ) : (
+        <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+          {patents.map((p) => (
+            <PatentRow
+              key={p.공개등록공보.application_number}
+              patent={p}
+              onOpenDetail={setDetail}
+            />
+          ))}
+        </div>
+      )}
+
+      <PatentDetailModal patent={detail} onClose={() => setDetail(null)} />
     </section>
   );
 }

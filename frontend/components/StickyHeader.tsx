@@ -8,6 +8,7 @@ interface StickyHeaderProps {
   onLogoClick: () => void;
   history?: string[];
   onRemoveHistory?: (query: string) => void;
+  onClearHistory?: () => void;
 }
 
 export default function StickyHeader({
@@ -16,6 +17,7 @@ export default function StickyHeader({
   onLogoClick,
   history = [],
   onRemoveHistory,
+  onClearHistory,
 }: StickyHeaderProps) {
   return (
     <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-gray-100 shadow-sm">
@@ -38,6 +40,7 @@ export default function StickyHeader({
             placeholder="다른 아이디어 검색…"
             history={history}
             onRemoveHistory={onRemoveHistory}
+            onClearHistory={onClearHistory}
           />
         </div>
       </div>

@@ -97,8 +97,12 @@ export default function Page() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [filters, setFilters] = useState<SearchFilters>(DEFAULT_FILTERS);
+  // 검색/분석 단계별 에러 메시지 — 성공 시 null. mock 폴백 시에도 사용자에게 명시.
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
-  const { history, add: addToHistory, remove: removeFromHistory } = useSearchHistory();
+  const { history, add: addToHistory, remove: removeFromHistory, clear: clearHistory } =
+    useSearchHistory();
 
   const analyzeAbort = useRef<AbortController | null>(null);
 
@@ -109,6 +113,8 @@ export default function Page() {
     setView("loading");
     setAnalysis(null);
     setAnalyzing(false);
+    setSearchError(null);
+    setAnalysisError(null);
     addToHistory(q);
 
     /* ── 1단계: 검색 (필터 적용) ── */
@@ -118,6 +124,9 @@ export default function Page() {
     } catch (err) {
       console.error("Search failed:", err);
       searchedPatents = mockPatents;
+      setSearchError(
+        "특허 검색 API 호출에 실패했습니다. 샘플 데이터로 대체해 표시합니다."
+      );
     }
 
     setPatents(searchedPatents);
@@ -137,6 +146,9 @@ export default function Page() {
       if (!controller.signal.aborted) {
         console.error("Analyze failed:", err);
         setAnalysis(mockAnalysis);
+        setAnalysisError(
+          "AI 분석 API 호출에 실패했습니다. 샘플 분석으로 대체해 표시합니다."
+        );
       }
     } finally {
       if (!controller.signal.aborted) {
@@ -145,7 +157,11 @@ export default function Page() {
     }
   }, [addToHistory, filters]);
 
-  const handleHome = useCallback(() => setView("home"), []);
+  const handleHome = useCallback(() => {
+    setView("home");
+    setSearchError(null);
+    setAnalysisError(null);
+  }, []);
 
   if (view === "home") {
     return (
@@ -155,6 +171,7 @@ export default function Page() {
         onFiltersChange={setFilters}
         history={history}
         onRemoveHistory={removeFromHistory}
+        onClearHistory={clearHistory}
       />
     );
   }
@@ -167,10 +184,15 @@ export default function Page() {
       patents={patents}
       analysis={analysis}
       analyzing={analyzing}
+      searchError={searchError}
+      analysisError={analysisError}
+      onDismissSearchError={() => setSearchError(null)}
+      onDismissAnalysisError={() => setAnalysisError(null)}
       onSearch={handleSearch}
       onHome={handleHome}
       history={history}
       onRemoveHistory={removeFromHistory}
+      onClearHistory={clearHistory}
     />
   );
 }
