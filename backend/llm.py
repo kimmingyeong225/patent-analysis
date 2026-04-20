@@ -167,6 +167,120 @@ def _build_patent_summary(patents: list) -> str:
     return "\n".join(lines)
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# LLM 응답 검증/정규화 — 스키마 위반 방지 가드
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 배경: LLM이 시스템 프롬프트 규칙 3("데이터에 없으면 '확인 불가' 명시")을 엄격히 따를 때
+#       enum/정수 필드에도 문자열을 넣어 응답 → AnalyzeResponse Literal 검증 실패 → 500.
+# 정책: 비정상값은 안전한 기본값으로 교정하고 warning 로그로 관측만 가능하게.
+
+RISK_LEVELS = ("높음", "중간", "낮음")
+
+# LLM 이 영문/축약형으로 답하는 케이스 방어 — 모두 한국어 Literal 값으로 매핑.
+# 키는 소문자+strip 처리된 상태로 비교됨.
+RISK_LEVEL_ALIASES = {
+    "medium": "중간", "moderate": "중간", "med": "중간",
+    "high": "높음", "severe": "높음", "h": "높음",
+    "low": "낮음", "minor": "낮음", "mild": "낮음", "l": "낮음",
+}
+
+REQUIRED_KEYS = {
+    "patent_title",
+    "summary",
+    "prior_art_comparison",
+    "five_aspects",
+    "novelty_score",
+    "novelty_reason",
+    "risk_level",
+    "risk_reason",
+    "recommendation",
+}
+
+_FIVE_ASPECT_KEYS = (
+    "innovation_point",
+    "implementation",
+    "marketability",
+    "design_around",
+    "registrability",
+)
+
+
+def _default_five_aspects() -> dict:
+    """five_aspects 누락/타입 오류 시 쓰는 안전한 기본값."""
+    return {k: "분석 데이터 없음" for k in _FIVE_ASPECT_KEYS}
+
+
+def _normalize_risk_level(value) -> str:
+    """risk_level 을 AnalyzeResponse.Literal 과 일치하는 값으로 정규화.
+
+    순서:
+      1) 한국어 Literal 값 ("높음"/"중간"/"낮음") 이면 strip 해서 그대로
+      2) 영문/축약 alias (대소문자 무관) 는 한국어로 매핑
+      3) 그 외는 warning 로그 + '중간' 으로 대체
+    """
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped in RISK_LEVELS:
+            return stripped
+        mapped = RISK_LEVEL_ALIASES.get(stripped.lower())
+        if mapped:
+            return mapped
+    logger.warning("risk_level 비정상값(%r) → '중간' 으로 대체", value)
+    return "중간"
+
+
+def _validate_and_fill_defaults(analysis: dict) -> dict:
+    """LLM 응답 dict 에 필수 키를 충족시키고 타입을 정규화.
+
+    - 누락 키는 타입별 기본값으로 채움
+    - novelty_score → _clamp_novelty_score, risk_level → _normalize_risk_level
+    - five_aspects 내부 5개 키도 string 타입 보장
+    분석 품질은 떨어지더라도 500 응답을 막는 것이 최우선.
+    """
+    if not isinstance(analysis, dict):
+        logger.warning("analysis 가 dict 아님(%r) → 전체 기본값으로 대체", type(analysis).__name__)
+        analysis = {}
+
+    missing = REQUIRED_KEYS - analysis.keys()
+    if missing:
+        logger.warning("LLM 응답 누락 키: %s — 기본값 주입", sorted(missing))
+        for k in missing:
+            if k == "novelty_score":
+                analysis[k] = 0
+            elif k == "risk_level":
+                analysis[k] = "중간"
+            elif k == "prior_art_comparison":
+                analysis[k] = []
+            elif k == "five_aspects":
+                analysis[k] = _default_five_aspects()
+            else:
+                analysis[k] = "분석 데이터 없음"
+
+    # 타입 정규화
+    analysis["novelty_score"] = _clamp_novelty_score(analysis.get("novelty_score"))
+    analysis["risk_level"] = _normalize_risk_level(analysis.get("risk_level"))
+
+    # prior_art_comparison 은 리스트여야 함 (LLM 이 dict/str 로 반환하는 경우 방어)
+    if not isinstance(analysis.get("prior_art_comparison"), list):
+        logger.warning(
+            "prior_art_comparison 타입 오류(%r) → 빈 리스트로 대체",
+            type(analysis.get("prior_art_comparison")).__name__,
+        )
+        analysis["prior_art_comparison"] = []
+
+    # five_aspects 내부 키 검증
+    fa = analysis.get("five_aspects")
+    if not isinstance(fa, dict):
+        logger.warning("five_aspects 타입 오류 → 기본값으로 대체")
+        analysis["five_aspects"] = _default_five_aspects()
+    else:
+        for k in _FIVE_ASPECT_KEYS:
+            if k not in fa or not isinstance(fa[k], str):
+                fa[k] = "분석 데이터 없음"
+
+    return analysis
+
+
 def _clamp_novelty_score(value) -> int:
     """novelty_score 를 0~100 범위의 정수로 정규화.
     비정상값(음수, 초과, 비정수 문자열)은 로깅 후 가까운 경계값으로 clamp.
@@ -217,9 +331,18 @@ def analyze_novelty(user_idea: str, patents: list, model: str = "gpt-4o") -> dic
     견고성:
       - Few-shot 예시로 JSON 스키마 일관성 강화
       - JSONDecodeError 발생 시 1회 재시도 (프롬프트·temperature 동일)
-      - novelty_score 는 0~100 정수로 clamp
+      - _validate_and_fill_defaults: 누락 키 주입 + novelty_score clamp + risk_level 정규화
       - user_idea 는 <user_input> 태그로 감싸고 태그/길이 이스케이프 (프롬프트 인젝션 방어)
     """
+    # 빈 patents 조기 방어 — LLM 호출 없이 기본값 응답.
+    # 이유: 입력 자체가 비어 있으면 모델이 시스템 규칙 3("데이터 없으면 '확인 불가'")을
+    #   엄격히 따르며 enum/정수 필드에까지 문자열을 넣어 스키마 검증을 무너뜨린 관측 이력.
+    #   토큰·지연 절감 + 500 재발 차단.
+    # 판정: None / [] / {} 등 falsy 모두 포함.
+    if not patents:
+        logger.warning("analyze_novelty: 빈 patents — LLM 호출 생략, 기본값 응답")
+        return _validate_and_fill_defaults({})
+
     patent_summary = _build_patent_summary(patents)
     safe_idea = _sanitize_user_idea(user_idea)
 
@@ -247,7 +370,5 @@ def analyze_novelty(user_idea: str, patents: list, model: str = "gpt-4o") -> dic
     else:
         return {"error": f"JSON 파싱 실패: {last_parse_err}", "raw": raw}
 
-    if "novelty_score" in analysis:
-        analysis["novelty_score"] = _clamp_novelty_score(analysis["novelty_score"])
-
-    return analysis
+    # 필수 키 + 타입 정규화 (risk_level Literal 위반, 누락 키로 인한 500 방지)
+    return _validate_and_fill_defaults(analysis)
