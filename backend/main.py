@@ -1,5 +1,6 @@
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,7 +21,12 @@ logger = logging.getLogger(__name__)
 import models, schemas, crud
 import config
 from database import engine, get_db, Base
-from kipris import fetch_patent_data_from_kipris, fetch_trend_data_from_kipris
+from kipris import (
+    fetch_patent_data_from_kipris,
+    fetch_trend_data_from_kipris,
+    fetch_patent_detail,
+    STALE_CLAIMS_PLACEHOLDER,
+)
 from mock_data import MOCK_SEARCH_RESPONSE
 import llm
 
@@ -110,7 +116,30 @@ def search_patents(
     # FAISS 유사도 점수 적용 및 정렬 (DB에는 필터 이전 원본을 저장)
     parsed_results = _apply_faiss_scores(parsed_results, query)
 
+    # 3-b) 하이브리드 enrich — 상위 max_results 건만 상세조회로 실데이터 주입
+    # - 슬라이스는 참조 복사 → dict 내부 수정이 원본 parsed_results에도 반영됨
+    # - 나머지 rank는 placeholder 유지 (캐시 저장 범위 보존, crud._is_stale_items가
+    #   상위 max_results 범위만 검사하므로 오탐 없음)
+    top_slice = parsed_results[: payload.max_results]
+    _enrich_top_patents_with_detail(top_slice)
+
+    # 저장 직전 검증 로그 — 상위 max_results 건 내 placeholder 잔여가 있으면
+    # 상세조회가 silent fail 중이라는 신호. 정상 상태에서는 0이어야 함.
+    top_n = payload.max_results
+    top_placeholder = sum(
+        1
+        for p in parsed_results[:top_n]
+        if (p.get("공개등록공보") or {}).get("claims")
+        and (p["공개등록공보"]["claims"][0] or "").startswith(STALE_CLAIMS_PLACEHOLDER[:20])
+    )
+    logger.info(
+        "save: total=%d, top%d 중 placeholder=%d (0이어야 정상)",
+        len(parsed_results), top_n, top_placeholder,
+    )
+
     # DB 영구 저장 — 저장 실패는 응답을 막지 않음 (사용자 요청은 계속 처리)
+    # parsed_results(전체 30건)를 그대로 저장: 상위 N은 enriched, 나머지는 placeholder.
+    # 이 혼재 상태가 캐시 설계 의도(필터 재적용용 원본 보존) + 비용 절감을 동시에 만족.
     try:
         crud.save_search_results(db, query, parsed_results)
     except Exception as e:
@@ -123,6 +152,72 @@ def search_patents(
         p["rank"] = i + 1
 
     return {"query": query, "cached": False, "results": parsed_results}
+
+
+def _enrich_top_patents_with_detail(patents: list, max_workers: int = 5) -> None:
+    """전달된 patents 리스트 전체에 KIPRIS 서지상세조회를 병렬 실행하여
+    claims/abstract/cited_patents를 in-place로 덮어쓴다.
+
+    호출 규약:
+      - 슬라이싱은 호출자가 책임 — 이 함수는 "받은 만큼 전부 enrich"한다.
+      - 호출자가 parsed_results[:max_results]를 넘기면, 슬라이스 참조가 원본 dict를
+        가리키므로 parsed_results의 상위 N건도 자동으로 enriched 상태가 된다.
+
+    실패 정책:
+      - 개별 상세조회 실패 → 기존 placeholder 유지 + 경고 로그
+      - 집계 실패율은 INFO 로그 (M/N 성공)
+
+    호출량:
+      - 검색 1회당 KIPRIS 총 호출 = freeSearch 1 + 상세조회 len(patents)
+
+    TODO (향후 개선): 사용자가 max_results를 점진적으로 늘릴 때(5→10),
+      이미 enriched된 상위 5건은 건너뛰고 rank 6~10만 추가 enrich하는 옵션.
+    """
+    if not patents:
+        return
+
+    # application_number가 비어있으면 호출 대상 제외 (검색 결과 품질 문제 방지)
+    tasks: list[tuple[int, str]] = []
+    for idx, p in enumerate(patents):
+        app_num = (p.get("공개등록공보") or {}).get("application_number") or ""
+        if app_num.strip():
+            tasks.append((idx, app_num.strip()))
+
+    if not tasks:
+        logger.info("상세조회 대상 없음 (application_number 누락)")
+        return
+
+    success = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_to_idx = {
+            pool.submit(fetch_patent_detail, app_num): idx
+            for idx, app_num in tasks
+        }
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                detail = future.result()
+            except Exception as e:
+                logger.warning("상세조회 작업 예외 (idx=%d): %s", idx, e)
+                continue
+            if not detail:
+                continue
+
+            pub = patents[idx].setdefault("공개등록공보", {})
+            if detail.get("claims"):
+                pub["claims"] = detail["claims"]
+            # 상세조회 abstract가 더 풍부하면 덮어쓰기 (freeSearch는 잘린 요약일 수 있음)
+            if detail.get("abstract"):
+                pub["abstract"] = detail["abstract"]
+
+            cit = patents[idx].setdefault("인용문헌", {})
+            if detail.get("cited_patents"):
+                cit["cited_patents"] = detail["cited_patents"]
+                cit["citing_count"] = len(detail["cited_patents"])
+
+            success += 1
+
+    logger.info("상세조회: %d/%d 성공", success, len(tasks))
 
 
 def _apply_filters(patents: list, request: schemas.SearchRequest) -> list:

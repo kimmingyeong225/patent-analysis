@@ -15,8 +15,42 @@ from sqlalchemy.orm import Session, joinedload
 
 import models
 import schemas
+from kipris import STALE_CLAIMS_PLACEHOLDER
 
 logger = logging.getLogger(__name__)
+
+# stale 감지 시 쓰는 prefix — 전체 문자열을 그대로 비교하면 공백/버전 차이에 취약하므로
+# 앞쪽 일부만 비교해 안전 마진을 확보한다.
+_STALE_PREFIX = STALE_CLAIMS_PLACEHOLDER[:20]
+
+
+def _is_stale_items(items: list, check_limit: int) -> bool:
+    """캐시에서 복원된 items 중 상위 check_limit 건에 한해 placeholder 검사.
+
+    판정 규칙 (items[:check_limit] 범위 내):
+      - claims가 None/빈 리스트 → stale (상세조회 미보강 상태)
+      - claims[0]이 STALE_CLAIMS_PLACEHOLDER prefix로 시작 → stale
+      하나라도 걸리면 전체 query를 재조회.
+
+    스코프 제한 근거 (하이브리드 저장 전략):
+      - /search는 상위 max_results 건만 enrich하고 나머지는 placeholder로 저장한다.
+      - 따라서 rank > max_results 건의 placeholder는 "캐시 정상 상태"이며
+        stale 판정 근거가 아니다. 이 범위까지 검사하면 매번 stale 오탐 → 무한 재조회.
+
+    빈 rows로 인한 "캐시 miss"(get_cached_search가 None 반환)와는
+    의미가 다르다 — 빈 캐시는 애초에 이 함수에 들어오지 않는다.
+    """
+    if check_limit <= 0:
+        return False
+    for it in items[:check_limit]:
+        pub = it.get("공개등록공보") or {}
+        claims = pub.get("claims")
+        if not claims:
+            return True
+        first = claims[0] if isinstance(claims[0], str) else ""
+        if first.startswith(_STALE_PREFIX):
+            return True
+    return False
 
 
 def db_row_to_search_result_item(patent: models.Patent) -> dict:
@@ -135,6 +169,26 @@ def get_cached_search(
         item["similarity_score"] = float(row.similarity_score or 0.0)
         items.append(item)
 
+    # stale 감지 — 상위 max_results 건에서만 placeholder/빈 claims 검사.
+    # rank 하위 건은 enrich 대상이 아니므로 placeholder가 정상 (하이브리드 저장 전략).
+    # 빈 rows로 인한 "캐시 miss"와는 구분되는 경로 (이 지점에 도달했다는 건 rows는 존재).
+    if _is_stale_items(items, request.max_results):
+        logger.info(
+            "stale cache detected for query %s → None 반환으로 재조회 유도",
+            query,
+        )
+        # 해당 query의 SearchResult 매핑만 회수 (Patent/Citation/LegalStatus는 공유 가능성 보존).
+        # 재조회 후 save_search_results의 Patent upsert가 claims를 갱신함.
+        try:
+            db.query(models.SearchResult).filter(
+                models.SearchResult.query == query
+            ).delete(synchronize_session=False)
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.warning("stale SearchResult 정리 실패(무시 가능): %s", e)
+        return None
+
     items = _apply_cache_filters(items, request)
     items = items[: request.max_results]
     for i, p in enumerate(items):
@@ -167,11 +221,25 @@ def save_search_results(db: Session, query: str, results: list) -> None:
             if not patent_id:
                 continue
 
-            # Patent: 중복 skip
+            # Patent: upsert (Citation/LegalStatus와 동일 패턴)
+            # - 기존 행이 있어도 상세조회로 보강된 claims/abstract를 반영할 수 있도록 update
+            # - 단, 상세조회가 실패해 placeholder가 섞인 경우를 구분하기 위해 호출측이
+            #   이미 _enrich_top_patents_with_detail을 돌린 뒤 저장하는 것을 전제로 함
             existing = db.query(models.Patent).filter(
                 models.Patent.patent_id == patent_id
             ).first()
-            if not existing:
+            if existing:
+                existing.application_number = pub.get("application_number")
+                existing.title = pub.get("title")
+                existing.applicant = pub.get("applicant")
+                existing.inventor = pub.get("inventor")
+                existing.application_date = pub.get("application_date")
+                existing.publication_date = pub.get("publication_date")
+                existing.registration_date = pub.get("registration_date")
+                existing.abstract = pub.get("abstract")
+                existing.claims = pub.get("claims") or []
+                existing.doc_type = pub.get("doc_type")
+            else:
                 db.add(models.Patent(
                     patent_id=patent_id,
                     application_number=pub.get("application_number"),

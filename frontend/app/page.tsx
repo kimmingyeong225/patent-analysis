@@ -17,24 +17,58 @@ const DEFAULT_FILTERS: SearchFilters = {
 };
 
 /* ── timeout 적용 fetch 헬퍼 ──────────────────── */
+// 외부 signal(사용자 취소)과 내부 timeout signal을 합성하여
+// 어느 쪽이든 abort되면 fetch가 즉시 중단되도록 함.
 async function fetchWithTimeout(
   url: string,
-  options: RequestInit,
+  options: RequestInit = {},
   timeoutMs = FETCH_TIMEOUT
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => timeoutController.abort(), timeoutMs);
+
+  const externalSignal = options.signal ?? null;
+
+  // 이미 외부에서 취소된 상태면 즉시 중단
+  if (externalSignal?.aborted) {
+    clearTimeout(timer);
+    throw new DOMException("Aborted", "AbortError");
+  }
+
+  let signal: AbortSignal;
+  let cleanup: (() => void) | null = null;
+
+  if (externalSignal) {
+    // AbortSignal.any 지원 환경(최신 브라우저/Node 20+) — 우선 사용
+    const anyFn = (AbortSignal as unknown as {
+      any?: (signals: AbortSignal[]) => AbortSignal;
+    }).any;
+    if (typeof anyFn === "function") {
+      signal = anyFn([externalSignal, timeoutController.signal]);
+    } else {
+      // 폴백: 외부 abort 시 timeoutController를 수동으로 abort
+      const onAbort = () => timeoutController.abort();
+      externalSignal.addEventListener("abort", onAbort, { once: true });
+      cleanup = () => externalSignal.removeEventListener("abort", onAbort);
+      signal = timeoutController.signal;
+    }
+  } else {
+    signal = timeoutController.signal;
+  }
+
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    return await fetch(url, { ...options, signal });
   } finally {
     clearTimeout(timer);
+    cleanup?.();
   }
 }
 
 /* ── 1단계: 특허 검색 (필터 포함) ─────────────── */
 async function fetchPatents(
   query: string,
-  filters: SearchFilters
+  filters: SearchFilters,
+  signal?: AbortSignal
 ): Promise<PatentResult[]> {
   if (!BACKEND_URL) {
     await new Promise((r) => setTimeout(r, 800));
@@ -50,6 +84,7 @@ async function fetchPatents(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
   if (!res.ok) throw new Error(`Search API failed: ${res.statusText}`);
   const data = await res.json();
@@ -59,7 +94,8 @@ async function fetchPatents(
 /* ── 2단계: AI 분석 (별도 호출) ───────────────── */
 async function fetchAnalysis(
   query: string,
-  patents: PatentResult[]
+  patents: PatentResult[],
+  signal?: AbortSignal
 ): Promise<Analysis> {
   if (!BACKEND_URL || patents.length === 0) {
     await new Promise((r) => setTimeout(r, 400));
@@ -70,6 +106,7 @@ async function fetchAnalysis(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_idea: query, patents }),
+    signal,
   });
   if (!res.ok) throw new Error(`Analyze API failed: ${res.statusText}`);
   return await res.json();
@@ -138,18 +175,21 @@ export default function Page() {
     analyzeAbort.current = controller;
 
     try {
-      const result = await fetchAnalysis(q, searchedPatents);
+      const result = await fetchAnalysis(q, searchedPatents, controller.signal);
       if (!controller.signal.aborted) {
         setAnalysis(result);
       }
     } catch (err) {
-      if (!controller.signal.aborted) {
-        console.error("Analyze failed:", err);
-        setAnalysis(mockAnalysis);
-        setAnalysisError(
-          "AI 분석 API 호출에 실패했습니다. 샘플 분석으로 대체해 표시합니다."
-        );
+      // 사용자가 취소한 경우(새 검색/홈 클릭)는 폴백 없이 조용히 무시 — 비용 낭비 방지
+      const name = (err as { name?: string } | null)?.name;
+      if (controller.signal.aborted || name === "AbortError") {
+        return;
       }
+      console.error("Analyze failed:", err);
+      setAnalysis(mockAnalysis);
+      setAnalysisError(
+        "AI 분석 API 호출에 실패했습니다. 샘플 분석으로 대체해 표시합니다."
+      );
     } finally {
       if (!controller.signal.aborted) {
         setAnalyzing(false);
@@ -158,6 +198,10 @@ export default function Page() {
   }, [addToHistory, filters]);
 
   const handleHome = useCallback(() => {
+    // 진행 중인 분석이 있으면 즉시 취소 — GPT-4o 불필요 호출 방지
+    analyzeAbort.current?.abort();
+    analyzeAbort.current = null;
+    setAnalyzing(false);
     setView("home");
     setSearchError(null);
     setAnalysisError(null);

@@ -7,18 +7,58 @@ from config import KIPRIS_API_KEY
 
 logger = logging.getLogger(__name__)
 
-# KIPRIS 특허/실용신안 무료 검색 서비스 URL (예시)
+# KIPRIS 특허/실용신안 무료 검색 서비스 URL (freeSearch / trend 용)
 KIPRIS_SEARCH_URL = "http://plus.kipris.or.kr/openapi/rest/patUtiModInfoSearchSevice/freeSearchInfo"
 
+# 서지상세조회 — 베이스 경로와 API 키 필드명이 freeSearch와 다름
+# - 베이스: /kipo-api/kipi/... (freeSearch: /openapi/rest/...)
+# - 키필드: ServiceKey (freeSearch: accessKey)
+KIPRIS_DETAIL_URL = (
+    "http://plus.kipris.or.kr/kipo-api/kipi/patUtiModInfoSearchSevice/"
+    "getBibliographyDetailInfoSearch"
+)
 
-def _kipris_get(params: dict, timeout: int = 15, max_attempts: int = 3) -> requests.Response:
-    """KIPRIS GET 요청. 타임아웃/연결오류/5xx 에 한해 지수 백오프 재시도.
+# freeSearch 단계에서만 삽입되는 청구항 placeholder.
+# crud.get_cached_search가 이 문자열로 stale cache를 감지해 자동 재조회를 트리거.
+STALE_CLAIMS_PLACEHOLDER = "청구범위 정보는 상세조회 API에서 확인 가능합니다."
+
+
+# 공통 헬퍼 ─────────────────────────────────────────────
+
+def _ensure_list(value) -> list:
+    """xmltodict는 반복 태그가 1건이면 dict로, 없으면 None을 반환.
+    이를 항상 리스트로 정규화해 downstream 루프를 단순화한다.
+    """
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _normalize_date(s) -> str:
+    """상세조회는 'YYYY.MM.DD', freeSearch는 'YYYYMMDD' 포맷.
+    DB/필터 일관성을 위해 점·하이픈·공백을 제거하여 'YYYYMMDD'로 통일한다.
+    None/빈 문자열은 ''로.
+    """
+    if not s:
+        return ""
+    return str(s).replace(".", "").replace("-", "").strip()
+
+
+def _kipris_request(
+    url: str,
+    params: dict,
+    timeout: int = 15,
+    max_attempts: int = 3,
+) -> requests.Response:
+    """KIPRIS GET 요청 (URL 파라미터화). 타임아웃/연결오류/5xx 에 한해 지수 백오프 재시도.
     4xx는 재시도 없이 즉시 raise (요청 자체가 잘못된 경우).
     """
     last_exc: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            resp = requests.get(KIPRIS_SEARCH_URL, params=params, timeout=timeout)
+            resp = requests.get(url, params=params, timeout=timeout)
             if 500 <= resp.status_code < 600:
                 # 5xx → 재시도 경로
                 if attempt == max_attempts:
@@ -44,6 +84,11 @@ def _kipris_get(params: dict, timeout: int = 15, max_attempts: int = 3) -> reque
             time.sleep(backoff)
     # 논리적으로 도달 불가 — 방어적 raise
     raise last_exc or RuntimeError("KIPRIS 재시도 소진")
+
+
+def _kipris_get(params: dict, timeout: int = 15, max_attempts: int = 3) -> requests.Response:
+    """freeSearch 전용 요청. 기존 호출부 호환을 위해 시그니처 유지."""
+    return _kipris_request(KIPRIS_SEARCH_URL, params, timeout, max_attempts)
 
 def fetch_trend_data_from_kipris(query: str, max_count: int = 500) -> dict:
     """
@@ -164,11 +209,13 @@ def parse_kipris_dict_to_json(xml_dict: dict):
                     "title": item.get('InventionName', '제목 없음'),
                     "applicant": item.get('Applicant', '출원인 정보 없음'),
                     "inventor": item.get('Inventor', '발명자 정보 없음'),
-                    "application_date": item.get('ApplicationDate', ''),
-                    "publication_date": item.get('OpeningDate', ''),
-                    "registration_date": item.get('RegistrationDate', None),
+                    "application_date": _normalize_date(item.get('ApplicationDate', '')),
+                    "publication_date": _normalize_date(item.get('OpeningDate', '')),
+                    "registration_date": _normalize_date(item.get('RegistrationDate', '')) or None,
                     "abstract": item.get('Abstract', '요약이 제공되지 않았습니다.'),
-                    "claims": ["청구범위 정보는 상세조회 API에서 확인 가능합니다."],
+                    # 상세조회 병렬 호출 이전 단계의 placeholder. main.py /search에서 덮어씀.
+                    # crud.get_cached_search가 이 문자열로 stale 캐시를 감지함.
+                    "claims": [STALE_CLAIMS_PLACEHOLDER],
                     "doc_type": item.get('RegistrationStatus', '공개')
                 },
                 "인용문헌": {
@@ -189,8 +236,118 @@ def parse_kipris_dict_to_json(xml_dict: dict):
                 }
             }
             results.append(mapped_item)
-            
+
     except Exception as e:
         logger.error("Parsing Error: %s", e)
 
     return results
+
+
+# 서지상세조회 ─────────────────────────────────────────────
+#
+# ⚠️ 비용/쿼터 메모:
+#   - /search 1회당 KIPRIS 호출 수: 기존 1회 → 1 + max_results 회 (기본 1+5=6회)
+#   - 무료 월 1000회 한도 기준 하루 약 30회 신규 검색 가능 (DB 캐시 히트는 호출 없음)
+#   - 프로덕션 시 상세조회를 비동기 큐/스케줄러로 분리 검토
+#
+# 응답 파싱 경로 (프로브로 확인됨 — 2026-04-17 기준):
+#   response.body.item.claimInfoArray.claimInfo[*].claim
+#   response.body.item.abstractInfoArray.abstractInfo.astrtCont
+#   response.body.item.priorArtDocumentsInfoArray.priorArtDocumentsInfo[*].documentsNumber
+#   response.body.item.legalStatusInfoArray.legalStatusInfo[*]
+
+def _kipris_get_detail(application_number: str, timeout: int = 20) -> requests.Response:
+    """서지상세조회 전용 GET. 재시도/백오프는 freeSearch와 동일 규칙 사용."""
+    params = {
+        "applicationNumber": application_number,
+        "ServiceKey": KIPRIS_API_KEY,  # 주의: 대문자 S (freeSearch의 accessKey와 다름)
+    }
+    return _kipris_request(KIPRIS_DETAIL_URL, params, timeout=timeout)
+
+
+def fetch_patent_detail(application_number: str) -> dict | None:
+    """출원번호 1건의 서지상세 정보를 조회하여 주요 필드만 추출.
+
+    반환: {
+        "claims": list[str],                # 청구항 본문 (순서 유지)
+        "abstract": str,                    # 초록 전문 (빈 문자열 가능)
+        "cited_patents": list[str],         # 선행문헌 번호 목록
+        "legal_status_history": list[dict], # 법적상태 이력 (향후 확장용, 현재는 원본 dict 보존)
+    }
+    - 네트워크·파싱 실패나 빈 응답 시 None 반환 (예외는 삼켜 로깅만).
+    - 호출자는 None이면 기존 freeSearch 결과를 그대로 유지해야 함.
+    """
+    if not application_number:
+        return None
+
+    try:
+        resp = _kipris_get_detail(application_number)
+    except Exception as e:
+        logger.warning("상세조회 네트워크 실패 (%s): %s", application_number, e)
+        return None
+
+    try:
+        parsed = xmltodict.parse(resp.text)
+    except Exception as e:
+        logger.warning("상세조회 XML 파싱 실패 (%s): %s", application_number, e)
+        return None
+
+    try:
+        item = (
+            parsed.get("response", {})
+            .get("body", {})
+            .get("item")
+        )
+        if not item:
+            logger.info("상세조회 응답에 item 없음 (%s)", application_number)
+            return None
+
+        # ── 청구항 ───────────────────────────────────────
+        claim_nodes = _ensure_list(
+            (item.get("claimInfoArray") or {}).get("claimInfo")
+        )
+        claims: list[str] = []
+        for node in claim_nodes:
+            if not isinstance(node, dict):
+                continue
+            text = (node.get("claim") or "").strip()
+            if text:
+                claims.append(text)
+
+        # ── 초록 ─────────────────────────────────────────
+        abs_info = (item.get("abstractInfoArray") or {}).get("abstractInfo")
+        # abstractInfo는 보통 단수 dict지만 방어적으로 리스트 가능성 처리
+        if isinstance(abs_info, list):
+            abs_info = abs_info[0] if abs_info else None
+        abstract = ""
+        if isinstance(abs_info, dict):
+            abstract = (abs_info.get("astrtCont") or "").strip()
+
+        # ── 선행문헌 ─────────────────────────────────────
+        prior_nodes = _ensure_list(
+            (item.get("priorArtDocumentsInfoArray") or {}).get("priorArtDocumentsInfo")
+        )
+        cited_patents: list[str] = []
+        for node in prior_nodes:
+            if not isinstance(node, dict):
+                continue
+            num = (node.get("documentsNumber") or "").strip()
+            if num:
+                cited_patents.append(num)
+
+        # ── 법적상태 이력 (원본 dict 유지) ──────────────
+        legal_nodes = _ensure_list(
+            (item.get("legalStatusInfoArray") or {}).get("legalStatusInfo")
+        )
+        legal_status_history = [n for n in legal_nodes if isinstance(n, dict)]
+
+        return {
+            "claims": claims,
+            "abstract": abstract,
+            "cited_patents": cited_patents,
+            "legal_status_history": legal_status_history,
+        }
+
+    except Exception as e:
+        logger.warning("상세조회 필드 추출 실패 (%s): %s", application_number, e)
+        return None

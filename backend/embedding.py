@@ -23,6 +23,35 @@ def get_embedding(text: str) -> np.ndarray:
     return np.array(response.data[0].embedding, dtype="float32")
 
 
+def get_embeddings_batch(texts: list[str], batch_size: int = 1024) -> np.ndarray:
+    """
+    여러 텍스트를 배치로 임베딩 (OpenAI는 input 리스트 한 번에 허용).
+    - 순차 호출 대비 API 호출 수를 N → ceil(N/batch_size)로 감소
+    - 빈 문자열은 공백 1칸으로 치환 (400 에러 방지, 원 위치 유지)
+    - OpenAI max 2048이지만 안전하게 1024 기본값
+    반환: (n, dim) float32 np.ndarray, 입력 순서 보존
+    """
+    if not texts:
+        return np.zeros((0, 0), dtype="float32")
+
+    # 빈 문자열 방어 — OpenAI 임베딩 API는 공백만 있어도 에러 가능 → " " 치환
+    safe_texts = [t if (isinstance(t, str) and t.strip()) else " " for t in texts]
+
+    all_vectors: list[np.ndarray] = []
+    for start in range(0, len(safe_texts), batch_size):
+        batch = safe_texts[start:start + batch_size]
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=batch,
+        )
+        # 방어적으로 index 기준 정렬 후 추출 (OpenAI는 순서 보장하지만 안전장치)
+        sorted_items = sorted(response.data, key=lambda d: d.index)
+        for item in sorted_items:
+            all_vectors.append(np.asarray(item.embedding, dtype="float32"))
+
+    return np.vstack(all_vectors).astype("float32", copy=False)
+
+
 # 청킹 
 
 def chunk_patent(patent_info: dict) -> list[dict]:
@@ -89,10 +118,10 @@ def build_faiss_index(chunks: list[dict]):
     반환: (index, chunks)
     """
     texts = [c["text"] for c in chunks]
-    
-    #  OpenAI 임베딩
-    vectors = np.array([get_embedding(t) for t in texts])
-    
+
+    #  OpenAI 임베딩 (배치 호출 — API 왕복 최소화)
+    vectors = get_embeddings_batch(texts)
+
     vectors = normalize_vectors(vectors)
     
     dim = vectors.shape[1]
