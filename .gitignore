@@ -61,6 +61,8 @@ cover/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+# 로컬 개발용 SQLite DB — 위치가 repo root / backend/ 모두 가능하므로 슬래시 없이 지정
+patents.db
 
 # Flask stuff:
 instance/
