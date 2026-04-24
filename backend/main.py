@@ -360,17 +360,25 @@ def _apply_faiss_scores(patents: list, query: str) -> list:
 def similarity_search(request: Request, response: Response, payload: schemas.SimilarityRequest):
     """
     사용자 쿼리 → KIPRIS 실제 데이터 → 청킹 → OpenAI 임베딩 → 코사인 유사도 FAISS → TOP K 반환
+
+    Phase 1-F.1:
+      - KIPRIS 빈 결과 시 mock 조용한 폴백 제거 → 빈 결과 그대로 반환
+      - 모든 반환 경로에 source 필드 명시 ("kipris" | "mock")
     """
     query = payload.query
     top_k = payload.top_k
 
     # 1. KIPRIS에서 실제 특허 데이터 가져오기
     if os.getenv("USE_MOCK", "false").lower() == "true":
+        source = "mock"
         kipris_results = list(MOCK_SEARCH_RESPONSE["results"])
     else:
+        source = "kipris"
         kipris_results = fetch_patent_data_from_kipris(query)
         if not kipris_results:
-            kipris_results = list(MOCK_SEARCH_RESPONSE["results"])
+            # mock 폴백 제거 — 빈 결과 그대로 반환 (/search Phase 1-F 와 동일 원칙)
+            logger.info("Similarity: KIPRIS 결과 없음 — 빈 결과 그대로 반환")
+            return {"query": query, "total_chunks": 0, "source": source, "results": []}
 
     # 2. FAISS 인덱스 (캐시 재사용)
     if query in _faiss_cache:
@@ -381,7 +389,7 @@ def similarity_search(request: Request, response: Response, payload: schemas.Sim
             index, chunks = build_faiss_index(chunks)
             _cache_put(_faiss_cache, query, (index, chunks))
         else:
-            return {"query": query, "total_chunks": 0, "results": []}
+            return {"query": query, "total_chunks": 0, "source": source, "results": []}
 
     # 3. 유사도 검색
     results = search_similar(query, index, chunks, top_k=top_k)
@@ -389,5 +397,6 @@ def similarity_search(request: Request, response: Response, payload: schemas.Sim
     return {
         "query": query,
         "total_chunks": len(chunks),
-        "results": results
+        "source": source,
+        "results": results,
     }
