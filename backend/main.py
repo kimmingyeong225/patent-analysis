@@ -1,6 +1,8 @@
 import logging
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable, Optional, Tuple
 
 from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,12 +37,68 @@ _CACHE_MAX = 50
 _faiss_cache: dict = {}  # { query: (index, chunks) }
 _trend_cache: dict = {}  # { query: { trend_data, is_truncated } }
 
+# Phase 1-G: _faiss_cache 동시성 보호 (per-key threading.Lock + guard lock).
+# FastAPI sync handler 는 anyio 스레드풀에서 실행되므로 threading primitive 를 사용한다.
+# _faiss_cache_guard : _faiss_key_locks dict 자체를 보호하는 가드 락
+# _faiss_key_locks   : 쿼리별 빌드 직렬화용 락 (같은 query 는 한 번만 빌드)
+# 락은 재사용 — 빌드 완료 후에도 제거하지 않음. _CACHE_MAX=50 수준이라 누적돼도
+# 메모리 영향 미미, 제거 시 race 여지만 늘어남. 의도된 결정.
+_faiss_cache_guard: threading.Lock = threading.Lock()
+_faiss_key_locks: dict[str, threading.Lock] = {}
+
+
 def _cache_put(cache: dict, key: str, value):
     """캐시에 항목 추가. 최대 크기 초과 시 가장 오래된 항목 삭제."""
     if key not in cache and len(cache) >= _CACHE_MAX:
         oldest = next(iter(cache))
         del cache[oldest]
     cache[key] = value
+
+
+def _get_or_build_faiss_index(
+    query: str,
+    build_fn: Callable[[], Optional[Tuple]],
+) -> Optional[Tuple]:
+    """_faiss_cache 에서 (index, chunks) 를 조회하거나, 없으면 락을 잡고 빌드한다.
+
+    Double-checked locking 패턴:
+      1) lock 없이 1차 체크 (hot path, 99%)
+      2) 가드 락으로 key_locks dict 접근 보호, per-key 락 획득/생성
+      3) per-key 락 안에서 2차 체크 — 대기 중 다른 스레드가 빌드했을 가능성
+      4) build_fn() 호출 후 성공 시에만 캐시에 저장
+
+    build_fn 규약:
+      - 반환값: (index, chunks) 튜플 또는 None
+      - None  → 빌드 대상 없음 (e.g. 청킹 결과 0건). 캐시 저장 안 함, 호출자에게 None 전달.
+      - 예외  → 그대로 전파. 캐시에 실패값 저장 안 함. 다음 요청은 재시도 가능.
+    """
+    # 1차 체크 — 빠른 경로
+    cached = _faiss_cache.get(query)
+    if cached is not None:
+        return cached
+
+    # 가드 락으로 key_locks dict 보호 (짧게 잡고 놔줌)
+    with _faiss_cache_guard:
+        key_lock = _faiss_key_locks.get(query)
+        if key_lock is None:
+            key_lock = threading.Lock()
+            _faiss_key_locks[query] = key_lock
+
+    # per-key 락 — 같은 쿼리로 들어온 동시 요청은 여기서 직렬화
+    with key_lock:
+        # 2차 체크 — 대기 중 다른 스레드가 빌드 완료했을 수 있음
+        cached = _faiss_cache.get(query)
+        if cached is not None:
+            return cached
+
+        # 빌드 (예외 발생 시 그대로 전파 — 캐시에 실패값 저장 안 함)
+        result = build_fn()
+        if result is None:
+            # 빌드 대상 없음 (chunks empty 등) — 캐시 저장 안 함
+            return None
+
+        _cache_put(_faiss_cache, query, result)
+        return result
 # 환경 변수 로드 (.env 파일) — config.py에서도 이미 로드하나 명시성 위해 유지
 load_dotenv()
 # 필수 env 누락 체크 (경고 레벨 — 실행은 계속)
@@ -317,17 +375,20 @@ def _apply_faiss_scores(patents: list, query: str) -> list:
     """
     KIPRIS 결과에 FAISS 코사인 유사도 점수를 적용합니다.
     특허별로 청크 중 최고 유사도를 대표 점수로 사용하고 내림차순 정렬합니다.
-    동일 쿼리는 캐시된 인덱스를 재사용합니다.
+    동일 쿼리는 캐시된 인덱스를 재사용합니다 (Phase 1-G: per-key lock 보호).
     """
     try:
-        if query in _faiss_cache:
-            index, chunks = _faiss_cache[query]
-        else:
-            chunks = chunk_patents(patents)
-            if not chunks:
-                return patents
-            index, chunks = build_faiss_index(chunks)
-            _cache_put(_faiss_cache, query, (index, chunks))
+        def _build() -> Optional[Tuple]:
+            chunks_local = chunk_patents(patents)
+            if not chunks_local:
+                return None
+            return build_faiss_index(chunks_local)
+
+        cached = _get_or_build_faiss_index(query, _build)
+        if cached is None:
+            # chunks empty — FAISS 계산 스킵, 원본 순서/점수 유지
+            return patents
+        index, chunks = cached
 
         chunk_results = search_similar(query, index, chunks, top_k=len(chunks))
 
@@ -380,16 +441,18 @@ def similarity_search(request: Request, response: Response, payload: schemas.Sim
             logger.info("Similarity: KIPRIS 결과 없음 — 빈 결과 그대로 반환")
             return {"query": query, "total_chunks": 0, "source": source, "results": []}
 
-    # 2. FAISS 인덱스 (캐시 재사용)
-    if query in _faiss_cache:
-        index, chunks = _faiss_cache[query]
-    else:
-        chunks = chunk_patents(kipris_results)
-        if chunks:
-            index, chunks = build_faiss_index(chunks)
-            _cache_put(_faiss_cache, query, (index, chunks))
-        else:
-            return {"query": query, "total_chunks": 0, "source": source, "results": []}
+    # 2. FAISS 인덱스 (캐시 재사용, Phase 1-G: per-key lock 보호)
+    def _build() -> Optional[Tuple]:
+        chunks_local = chunk_patents(kipris_results)
+        if not chunks_local:
+            return None
+        return build_faiss_index(chunks_local)
+
+    cached_build = _get_or_build_faiss_index(query, _build)
+    if cached_build is None:
+        # 청킹 결과 0건 — 빈 응답 반환 (기존 else 브랜치와 동일 시맨틱)
+        return {"query": query, "total_chunks": 0, "source": source, "results": []}
+    index, chunks = cached_build
 
     # 3. 유사도 검색
     results = search_similar(query, index, chunks, top_k=top_k)
