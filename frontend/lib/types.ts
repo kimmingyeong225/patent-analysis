@@ -76,6 +76,8 @@ export interface Analysis {
 export interface SearchResponse {
   results: PatentResult[];
   cached: boolean;
+  // Phase 1-F: 결과 출처 투명화. 백엔드가 기본값 "kipris"로 항상 반환.
+  source: "kipris" | "mock" | "cache";
 }
 
 export interface SearchFilters {

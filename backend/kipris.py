@@ -202,7 +202,10 @@ def parse_kipris_dict_to_json(xml_dict: dict):
 
             mapped_item = {
                 "rank": idx + 1,
-                "similarity_score": round(0.95 - (idx * 0.05), 2),
+                # FAISS가 main._apply_faiss_scores에서 실제 코사인 유사도로 덮어씀.
+                # FAISS 실패 시에는 0.0이 남아 UI에서 "점수 없음"으로 표시된다.
+                # (이전: round(0.95 - idx*0.05, 2) → KIPRIS 랭크 기반 가짜 점수)
+                "similarity_score": 0.0,
                 "공개등록공보": {
                     "patent_id": patent_id,
                     "application_number": item.get('ApplicationNumber', patent_id),

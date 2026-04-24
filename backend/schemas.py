@@ -52,6 +52,11 @@ class SearchResultItem(BaseModel):
 class SearchResponse(BaseModel):
     query: str
     cached: bool
+    # source — 결과 출처 투명화 (Phase 1-F). 기본값 "kipris"로 하위 호환.
+    #   "kipris" : 실시간 KIPRIS 호출 (빈 결과 포함)
+    #   "mock"   : USE_MOCK=true 환경변수 분기
+    #   "cache"  : DB 영구 캐시 hit
+    source: Literal["kipris", "mock", "cache"] = "kipris"
     results: List[SearchResultItem]
 
 

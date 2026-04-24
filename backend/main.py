@@ -97,21 +97,25 @@ def search_patents(
         parsed_results = parsed_results[:payload.max_results]
         for i, p in enumerate(parsed_results):
             p["rank"] = i + 1
-        return {"query": query, "cached": False, "results": parsed_results}
+        return {"query": query, "cached": False, "source": "mock", "results": parsed_results}
 
     # 2) DB 캐시 조회 (필터/max_results는 캐시 후처리로 적용됨)
     cached = crud.get_cached_search(db, query, payload)
     if cached is not None:
         logger.info("DB cache hit: %s", query)
-        return {"query": query, "cached": True, "results": cached}
+        return {"query": query, "cached": True, "source": "cache", "results": cached}
 
     # 3) 캐시 miss → KIPRIS 호출
     logger.info("DB cache miss. Fetching from KIPRIS: %s", query)
     fetch_count = max(payload.max_results * 4, 30)
     parsed_results = fetch_patent_data_from_kipris(query, docs_count=fetch_count)
+
+    # KIPRIS 빈 결과는 빈 결과 그대로 반환 — mock 조용한 폴백 금지.
+    # 빈 결과를 DB에 저장하면 다음 요청부터 영구적으로 빈 캐시가 박혀 사용자가 고착되므로
+    # 저장/FAISS/enrich 모두 건너뛰고 즉시 반환한다.
     if not parsed_results:
-        logger.warning("KIPRIS 결과 없음 → MOCK_DATA로 폴백")
-        parsed_results = list(MOCK_SEARCH_RESPONSE["results"])
+        logger.info("KIPRIS 결과 없음 — 빈 결과 그대로 반환 (mock 폴백 제거됨)")
+        return {"query": query, "cached": False, "source": "kipris", "results": []}
 
     # FAISS 유사도 점수 적용 및 정렬 (DB에는 필터 이전 원본을 저장)
     parsed_results = _apply_faiss_scores(parsed_results, query)
@@ -151,7 +155,7 @@ def search_patents(
     for i, p in enumerate(parsed_results):
         p["rank"] = i + 1
 
-    return {"query": query, "cached": False, "results": parsed_results}
+    return {"query": query, "cached": False, "source": "kipris", "results": parsed_results}
 
 
 def _enrich_top_patents_with_detail(patents: list, max_workers: int = 5) -> None:
