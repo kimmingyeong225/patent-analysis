@@ -414,12 +414,18 @@ def get_trend(request: Request, response: Response, query: str):
     """
     def _build() -> Optional[dict]:
         # fetch_trend_data_from_kipris 는 내부에서 예외 swallow 하고 빈 dict 반환.
-        # None 반환은 현재 도달 불가지만 헬퍼 규약과 일치시킴 (방어 가드).
-        return fetch_trend_data_from_kipris(query)
+        # 빈 trend_data 는 캐시 저장 스킵 (Phase 2-A.1 — /search 1-F 동일 원칙):
+        # KIPRIS 일시 장애로 빈 결과가 캐시되면 _CACHE_MAX(50) 동안 stale lock-in.
+        # trade-off: 진짜 빈 트렌드 query 도 매번 재호출 (1-F 와 동일 결정).
+        result = fetch_trend_data_from_kipris(query)
+        if not result.get("trend_data"):
+            logger.info("Trend: 빈 결과 — 캐시 저장 스킵 (다음 요청 재시도)")
+            return None
+        return result
 
     cached = _get_or_build_trend_cache(query, _build)
     if cached is None:
-        # 방어적 분기 — 현재 build_fn 은 None 반환 안 함.
+        # 빈 결과 — _build 가 None 반환 (Phase 2-A.1, 캐시 저장 스킵).
         return {"query": query, "trend_data": [], "is_truncated": False}
 
     return {"query": query, "trend_data": cached["trend_data"], "is_truncated": cached["is_truncated"]}
