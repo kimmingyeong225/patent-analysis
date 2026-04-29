@@ -22,6 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 import models, schemas, crud
+import filters
 import config
 from database import engine, get_db, Base
 from kipris import (
@@ -208,7 +209,7 @@ def search_patents(
     if os.getenv("USE_MOCK", "false").lower() == "true":
         logger.info("USE_MOCK=true -> mock 데이터 사용")
         parsed_results = list(MOCK_SEARCH_RESPONSE["results"])
-        parsed_results = _apply_filters(parsed_results, payload)
+        parsed_results = filters.apply_filters(parsed_results, payload)
         parsed_results = _apply_faiss_scores(parsed_results, query)
         parsed_results = parsed_results[:payload.max_results]
         for i, p in enumerate(parsed_results):
@@ -266,7 +267,7 @@ def search_patents(
         logger.error("DB 저장 실패 (응답은 계속): %s", e)
 
     # 응답 직전 필터/제한/rank 재부여
-    parsed_results = _apply_filters(parsed_results, payload)
+    parsed_results = filters.apply_filters(parsed_results, payload)
     parsed_results = parsed_results[:payload.max_results]
     for i, p in enumerate(parsed_results):
         p["rank"] = i + 1
@@ -340,35 +341,6 @@ def _enrich_top_patents_with_detail(patents: list, max_workers: int = 5) -> None
     logger.info("상세조회: %d/%d 성공", success, len(tasks))
 
 
-def _apply_filters(patents: list, request: schemas.SearchRequest) -> list:
-    """출원연도 범위, 법적상태 필터를 적용합니다."""
-    filtered = patents
-
-    # 출원연도 필터
-    if request.year_from or request.year_to:
-        def in_year_range(p):
-            date = p.get("공개등록공보", {}).get("application_date", "") or ""
-            if len(date) < 4:
-                return False
-            try:
-                year = int(date[:4])
-            except ValueError:
-                return False
-            if request.year_from and year < request.year_from:
-                return False
-            if request.year_to and year > request.year_to:
-                return False
-            return True
-        filtered = [p for p in filtered if in_year_range(p)]
-
-    # 법적상태 필터
-    if request.status:
-        filtered = [
-            p for p in filtered
-            if p.get("법적상태", {}).get("status", "") == request.status
-        ]
-
-    return filtered
 @app.get("/patent/{patent_id}")
 def get_patent_detail(patent_id: str, db: Session = Depends(get_db)):
     """

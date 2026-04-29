@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, joinedload
 
 import models
 import schemas
+import filters
 from kipris import STALE_CLAIMS_PLACEHOLDER
 
 logger = logging.getLogger(__name__)
@@ -110,35 +111,6 @@ def db_row_to_search_result_item(patent: models.Patent) -> dict:
     }
 
 
-def _apply_cache_filters(results: list, request: schemas.SearchRequest) -> list:
-    """캐시된 dict 리스트에 year/status 필터를 적용. (main._apply_filters와 동일 규칙)"""
-    filtered = results
-
-    if request.year_from or request.year_to:
-        def in_year_range(p):
-            date = p.get("공개등록공보", {}).get("application_date", "") or ""
-            if len(date) < 4:
-                return False
-            try:
-                year = int(date[:4])
-            except ValueError:
-                return False
-            if request.year_from and year < request.year_from:
-                return False
-            if request.year_to and year > request.year_to:
-                return False
-            return True
-        filtered = [p for p in filtered if in_year_range(p)]
-
-    if request.status:
-        filtered = [
-            p for p in filtered
-            if p.get("법적상태", {}).get("status", "") == request.status
-        ]
-
-    return filtered
-
-
 def get_cached_search(
     db: Session, query: str, request: schemas.SearchRequest
 ) -> Optional[list]:
@@ -189,7 +161,7 @@ def get_cached_search(
             logger.warning("stale SearchResult 정리 실패(무시 가능): %s", e)
         return None
 
-    items = _apply_cache_filters(items, request)
+    items = filters.apply_filters(items, request)
     items = items[: request.max_results]
     for i, p in enumerate(items):
         p["rank"] = i + 1
