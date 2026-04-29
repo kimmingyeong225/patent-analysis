@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import threading
@@ -439,16 +440,24 @@ def _apply_faiss_scores(patents: list, query: str) -> list:
     """
     KIPRIS 결과에 FAISS 코사인 유사도 점수를 적용합니다.
     특허별로 청크 중 최고 유사도를 대표 점수로 사용하고 내림차순 정렬합니다.
-    동일 쿼리는 캐시된 인덱스를 재사용합니다 (Phase 1-G: per-key lock 보호).
+    캐시 키는 query + patents patent_id 해시 (Phase 2-A.2): 같은 query 라도
+    patents 다르면 다른 키 → 잘못된 score 매핑 방지.
     """
     try:
+        # 캐시 키 — query + patent_id 해시. patents 가 다르면 키 다름.
+        # 근거: _apply_filters → _apply_faiss_scores 순서 (USE_MOCK 분기) /
+        # fetch_count 가변 (KIPRIS 분기) 시 같은 query 라도 patents 부분집합 다름.
+        ids = tuple(p["공개등록공보"]["patent_id"] for p in patents)
+        ids_hash = hashlib.sha1(",".join(ids).encode("utf-8")).hexdigest()[:12]
+        cache_key = f"{query}:{ids_hash}"
+
         def _build() -> Optional[Tuple]:
             chunks_local = chunk_patents(patents)
             if not chunks_local:
                 return None
             return build_faiss_index(chunks_local)
 
-        cached = _get_or_build_faiss_index(query, _build)
+        cached = _get_or_build_faiss_index(cache_key, _build)
         if cached is None:
             # chunks empty — FAISS 계산 스킵, 원본 순서/점수 유지
             return patents
