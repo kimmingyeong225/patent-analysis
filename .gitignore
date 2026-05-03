@@ -220,4 +220,4 @@ frontend/node_modules/
 # Phase 진행 시 STEP 보고용 임시 파일 (긴 출력 UI 접힘 회피).
 # .tmp_ prefix 자체가 임시 표시 컨벤션 — 의도치 않은 tmp 파일까지
 # ignore 되지만 의도된 동작.
-backend/.tmp_*
+**/.tmp_*
