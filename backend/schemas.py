@@ -1,8 +1,12 @@
 from pydantic import BaseModel
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 class SearchRequest(BaseModel):
     query: str
+    year_from: Optional[int] = None       # 출원연도 시작 (예: 2020)
+    year_to: Optional[int] = None         # 출원연도 끝 (예: 2025)
+    status: Optional[str] = None          # 법적상태 필터 ("등록" | "공개" | "소멸" 등, None이면 전체)
+    max_results: int = 5                  # 반환 결과 수 (5 / 10 / 15)
 
 class ClassificationItem(BaseModel):
     code: str
@@ -16,7 +20,7 @@ class LegalStatusModel(BaseModel):
     status: str
     status_code: str
     last_event: str
-    last_event_date: str
+    last_event_date: Optional[str] = None
     is_alive: bool
 
 class CitationModel(BaseModel):
@@ -31,10 +35,10 @@ class PatentInfo(BaseModel):
     applicant: str
     inventor: str
     application_date: str
-    publication_date: str
+    publication_date: Optional[str] = None
     registration_date: Optional[str] = None
-    abstract: str
-    claims: List[str]
+    abstract: str = "요약이 제공되지 않았습니다."
+    claims: List[str] = []
     doc_type: str
 
 class SearchResultItem(BaseModel):
@@ -80,7 +84,7 @@ class AnalyzeResponse(BaseModel):
     five_aspects: FiveAspects
     novelty_score: int
     novelty_reason: str
-    risk_level: str
+    risk_level: Literal["높음", "중간", "낮음"]
     risk_reason: str
     recommendation: str
 

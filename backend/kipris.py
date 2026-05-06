@@ -1,31 +1,126 @@
+import logging
+import time
+
 import requests
 import xmltodict
 from config import KIPRIS_API_KEY
 
+logger = logging.getLogger(__name__)
+
 # KIPRIS 특허/실용신안 무료 검색 서비스 URL (예시)
 KIPRIS_SEARCH_URL = "http://plus.kipris.or.kr/openapi/rest/patUtiModInfoSearchSevice/freeSearchInfo"
 
-def fetch_patent_data_from_kipris(query: str):
+
+def _kipris_get(params: dict, timeout: int = 15, max_attempts: int = 3) -> requests.Response:
+    """KIPRIS GET 요청. 타임아웃/연결오류/5xx 에 한해 지수 백오프 재시도.
+    4xx는 재시도 없이 즉시 raise (요청 자체가 잘못된 경우).
     """
-    KIPRIS API를 호출하여 특허 검색 결과를 XML에서 JSON(dict)으로 파싱
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.get(KIPRIS_SEARCH_URL, params=params, timeout=timeout)
+            if 500 <= resp.status_code < 600:
+                # 5xx → 재시도 경로
+                if attempt == max_attempts:
+                    resp.raise_for_status()
+                backoff = min(2 ** (attempt - 1), 4)
+                logger.warning(
+                    "KIPRIS %d 응답, %ds 후 재시도 %d/%d",
+                    resp.status_code, backoff, attempt, max_attempts,
+                )
+                time.sleep(backoff)
+                continue
+            resp.raise_for_status()  # 4xx는 즉시 raise
+            return resp
+        except (requests.Timeout, requests.ConnectionError) as e:
+            last_exc = e
+            if attempt == max_attempts:
+                raise
+            backoff = min(2 ** (attempt - 1), 4)
+            logger.warning(
+                "KIPRIS 네트워크 오류, %ds 후 재시도 %d/%d: %s",
+                backoff, attempt, max_attempts, e,
+            )
+            time.sleep(backoff)
+    # 논리적으로 도달 불가 — 방어적 raise
+    raise last_exc or RuntimeError("KIPRIS 재시도 소진")
+
+def fetch_trend_data_from_kipris(query: str, max_count: int = 500) -> dict:
+    """
+    트렌드 집계 전용. KIPRIS API를 페이지네이션하여 최대 max_count건을 수집하고
+    연도별 출원 건수를 반환합니다. (API 1회 최대 100건이므로 여러 번 호출)
+    반환값: { "trend_data": [...], "is_truncated": bool }
+      - is_truncated=True  → max_count 한계에 도달 (실제 건수는 더 많을 수 있음)
+      - is_truncated=False → 전체 결과를 모두 수집함
+    """
+    PAGE_SIZE = 100
+    year_counts: dict[str, int] = {}
+    fetched = 0
+
+    try:
+        for page in range(max_count // PAGE_SIZE):
+            params = {
+                "word": query,
+                "accessKey": KIPRIS_API_KEY,
+                "docsStart": str(page * PAGE_SIZE + 1),
+                "docsCount": str(PAGE_SIZE),
+            }
+            try:
+                response = _kipris_get(params, timeout=15)
+            except requests.RequestException as e:
+                logger.warning("Trend KIPRIS 페이지 %d 실패, 중단: %s", page, e)
+                break
+
+            xml_dict = xmltodict.parse(response.text)
+            items = (
+                xml_dict.get("response", {})
+                .get("body", {})
+                .get("items", {})
+                .get("PatentUtilityInfo", [])
+            )
+            if isinstance(items, dict):
+                items = [items]
+            if not items:
+                break  # 더 이상 결과 없음
+
+            for item in items:
+                date = item.get("ApplicationDate", "") or ""
+                if len(date) >= 4:
+                    year = date[:4]
+                    if year.isdigit():
+                        year_counts[year] = year_counts.get(year, 0) + 1
+
+            fetched += len(items)
+            if len(items) < PAGE_SIZE:
+                break  # 마지막 페이지 도달
+
+        trend_data = [{"year": y, "count": c} for y, c in sorted(year_counts.items())]
+        return {"trend_data": trend_data, "is_truncated": fetched >= max_count}
+
+    except Exception as e:
+        logger.error("Trend KIPRIS fetch error: %s", e)
+        return {"trend_data": [], "is_truncated": False}
+
+
+def fetch_patent_data_from_kipris(query: str, docs_count: int = 30):
+    """
+    KIPRIS API를 호출하여 특허 검색 결과를 XML에서 JSON(dict)으로 파싱.
+    docs_count: KIPRIS에서 가져올 최대 건수 (필터링 전 모수, 기본 30건)
     """
     params = {
         "word": query,
         "accessKey": KIPRIS_API_KEY,
         "docsStart": "1",
-        "docsCount": "5" # 상위 5개 정도만 가져오기
+        "docsCount": str(docs_count),
     }
-    
+
     try:
-        response = requests.get(KIPRIS_SEARCH_URL, params=params)
-        response.raise_for_status() # 오류 발생시 예외 처리
-        
-        # XML to Dictionary 변환
+        response = _kipris_get(params, timeout=15)
         xml_dict = xmltodict.parse(response.text)
         return parse_kipris_dict_to_json(xml_dict)
     except Exception as e:
-        print(f"KIPRIS API Error: {e}")
-        # 오류 발생 시 빈 리스트 또는 모의 데이터를 반환할 수 있음
+        logger.error("KIPRIS API Error: %s", e)
+        # 오류 발생 시 빈 리스트 반환 (호출자가 mock 폴백)
         return []
 
 def parse_kipris_dict_to_json(xml_dict: dict):
@@ -57,7 +152,7 @@ def parse_kipris_dict_to_json(xml_dict: dict):
             # 특허실용행정처분 -> 법적상태.status
             
             patent_id = item.get('OpeningNumber', '') or item.get('RegistrationNumber', '') or f"UNKNOWN-{idx}"
-            ipc_codes = item.get('InternationalpatentclassificationNumber', '').split('|')
+            ipc_codes = (item.get('InternationalpatentclassificationNumber') or '').split('|')
             ipc_list = [{"code": code.strip(), "desc": ""} for code in ipc_codes if code.strip()]
 
             mapped_item = {
@@ -96,6 +191,6 @@ def parse_kipris_dict_to_json(xml_dict: dict):
             results.append(mapped_item)
             
     except Exception as e:
-        print(f"Parsing Error: {e}")
-        
+        logger.error("Parsing Error: %s", e)
+
     return results
