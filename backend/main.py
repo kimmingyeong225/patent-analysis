@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,6 +48,41 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ──────────────── 다국어 검색 지원 (영어 → 한국어 자동 번역) ────────────────
+
+def is_korean(text: str) -> bool:
+    """텍스트에 한글이 포함되어 있으면 True"""
+    return bool(re.search(r"[가-힣]", text))
+
+
+def translate_to_korean(text: str) -> str:
+    """비한국어 입력을 KIPRIS 검색에 적합한 한국어 키워드로 번역.
+    한국어 입력은 그대로 반환. 번역 실패 시 원문 fallback."""
+    if is_korean(text):
+        return text
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "당신은 특허 검색용 번역가입니다. 입력된 텍스트를 한국 특허청(KIPRIS) 검색에 적합한 한국어 키워드로 번역하세요. 번역 결과만 출력하고 설명은 하지 마세요."
+                },
+                {"role": "user", "content": text}
+            ],
+            temperature=0,
+            max_tokens=100,
+        )
+        translated = response.choices[0].message.content.strip()
+        logger.info(f"번역: '{text}' → '{translated}'")
+        return translated
+    except Exception as e:
+        logger.error(f"번역 실패, 원문 사용: {e}")
+        return text
 # ----------------- 팀원 작성 부분 (기본 작동 확인용) -----------------
 @app.get("/")
 def root():
@@ -56,13 +92,9 @@ def root():
 def search_patents(request: schemas.SearchRequest, db: Session = Depends(get_db)):
     """
     주어진 쿼리에 대해 KIPRIS API를 검색하고 결과를 반환합니다.
-
-    흐름:
-      1) USE_MOCK=true 이면 mock 경로
-      2) DB 영구 캐시 조회 (동일 query — 필터는 응답 직전에 후처리)
-      3) 캐시 miss → KIPRIS 호출 → FAISS 점수/정렬 → DB 저장(원본) → 필터/limit 후 응답
+    영어 등 비한국어 입력 시 자동으로 한국어로 번역해서 검색합니다.
     """
-    query = request.query
+    query = translate_to_korean(request.query)
 
     # 1) USE_MOCK 우선 (DB를 우회)
     if os.getenv("USE_MOCK", "false").lower() == "true":
@@ -178,6 +210,7 @@ def get_trend(query: str):
     KIPRIS에서 최대 500건을 페이지네이션하여 출원연도별 실제 건수를 집계합니다.
     동일 쿼리는 메모리 캐시를 재사용합니다.
     """
+    query = translate_to_korean(query)
     if query in _trend_cache:
         logger.info("Trend cache hit: %s", query)
         cached = _trend_cache[query]
@@ -235,13 +268,11 @@ def _apply_faiss_scores(patents: list, query: str) -> list:
 
     return patents
 
-
+# --- 수정
 @app.post("/similarity", response_model=schemas.SimilarityResponse)
 def similarity_search(request: schemas.SimilarityRequest):
-    """
-    사용자 쿼리 → KIPRIS 실제 데이터 → 청킹 → OpenAI 임베딩 → 코사인 유사도 FAISS → TOP K 반환
-    """
-    query = request.query
+    """..."""
+    query = translate_to_korean(request.query)
     top_k = request.top_k
 
     # 1. KIPRIS에서 실제 특허 데이터 가져오기
