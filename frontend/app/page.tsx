@@ -141,9 +141,11 @@ export default function Page() {
   const { history, add: addToHistory, remove: removeFromHistory, clear: clearHistory } =
     useSearchHistory();
 
+  const searchAbort = useRef<AbortController | null>(null);
   const analyzeAbort = useRef<AbortController | null>(null);
 
   const handleSearch = useCallback(async (q: string) => {
+    searchAbort.current?.abort();
     analyzeAbort.current?.abort();
 
     setQuery(q);
@@ -155,10 +157,19 @@ export default function Page() {
     addToHistory(q);
 
     /* ── 1단계: 검색 (필터 적용) ── */
+    const searchController = new AbortController();
+    searchAbort.current = searchController;
+
     let searchedPatents: PatentResult[];
     try {
-      searchedPatents = await fetchPatents(q, filters);
+      searchedPatents = await fetchPatents(q, filters, searchController.signal);
+      if (searchController.signal.aborted) return;
     } catch (err) {
+      // 사용자가 취소한 경우(새 검색/홈 클릭)는 폴백 없이 조용히 무시 — 비용 낭비 방지
+      const name = (err as { name?: string } | null)?.name;
+      if (searchController.signal.aborted || name === "AbortError") {
+        return;
+      }
       console.error("Search failed:", err);
       searchedPatents = mockPatents;
       setSearchError(
@@ -198,7 +209,9 @@ export default function Page() {
   }, [addToHistory, filters]);
 
   const handleHome = useCallback(() => {
-    // 진행 중인 분석이 있으면 즉시 취소 — GPT-4o 불필요 호출 방지
+    // 진행 중인 검색/분석이 있으면 즉시 취소 — view 강제 전환 + GPT-4o 불필요 호출 방지
+    searchAbort.current?.abort();
+    searchAbort.current = null;
     analyzeAbort.current?.abort();
     analyzeAbort.current = null;
     setAnalyzing(false);
