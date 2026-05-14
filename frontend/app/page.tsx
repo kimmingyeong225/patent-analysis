@@ -70,11 +70,6 @@ async function fetchPatents(
   filters: SearchFilters,
   signal?: AbortSignal
 ): Promise<PatentResult[]> {
-  if (!BACKEND_URL) {
-    await new Promise((r) => setTimeout(r, 800));
-    return mockPatents;
-  }
-
   const body: Record<string, unknown> = { query };
   if (filters.year_from != null) body.year_from = filters.year_from;
   if (filters.year_to != null) body.year_to = filters.year_to;
@@ -97,7 +92,7 @@ async function fetchAnalysis(
   patents: PatentResult[],
   signal?: AbortSignal
 ): Promise<Analysis> {
-  if (!BACKEND_URL || patents.length === 0) {
+  if (patents.length === 0) {
     await new Promise((r) => setTimeout(r, 400));
     return mockAnalysis;
   }
