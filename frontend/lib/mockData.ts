@@ -1,0 +1,162 @@
+import type { PatentResult, Analysis } from "./types";
+
+export const mockPatents: PatentResult[] = [
+  {
+    rank: 1,
+    similarity_score: 0.91,
+    공개등록공보: {
+      patent_id: "KR1020230012345",
+      title: "웨어러블 디바이스용 자가발전 에너지 하베스팅 스트랩",
+      applicant: "삼성전자 주식회사",
+      inventor: "홍길동, 김철수",
+      application_number: "10-2022-0145231",
+      application_date: "2022.10.28",
+      publication_date: "2023.04.15",
+      doc_type: "공개특허공보",
+      abstract:
+        "본 발명은 스마트 워치 등 웨어러블 디바이스에 부착 가능한 스트랩 형태의 자가발전 장치에 관한 것으로, 압전 소자와 태양광 셀을 복합 적용하여 착용 중 발생하는 운동에너지와 광에너지를 전기에너지로 변환, 배터리를 자동 충전하는 기술을 포함한다. 본 발명에 따르면 별도의 충전 없이 장시간 착용 및 사용이 가능하다.",
+      claims: [
+        "압전 소자와 태양광 셀을 포함하는 스트랩 구조물",
+        "복합 에너지 수집 및 배터리 자동 충전 방법",
+        "유연 기판 위에 배치된 에너지 변환 소자 어레이",
+      ],
+    },
+    인용문헌: { cited_by_count: 3, citing_count: 5, cited_patents: [] },
+    법적상태: { status: "등록", status_code: "R0060", last_event: "등록결정", last_event_date: "2023.04.15", is_alive: true },
+    분류코드: { ipc: [{ code: "H02J 7/35", desc: "태양광 에너지를 이용한 충전 장치" }], cpc: [] },
+  },
+  {
+    rank: 2,
+    similarity_score: 0.78,
+    공개등록공보: {
+      patent_id: "KR1020210089332",
+      title: "압전소자 기반 신체 동작 에너지 변환 장치",
+      applicant: "한국전자통신연구원",
+      inventor: "이영희",
+      application_number: "10-2021-0089332",
+      application_date: "2021.07.08",
+      publication_date: "2022.01.20",
+      doc_type: "공개특허공보",
+      abstract:
+        "인체의 움직임을 이용하여 전기에너지를 생성하는 압전소자 기반의 에너지 하베스팅 장치이다. 손목 관절의 미세한 진동을 감지하여 지속적인 전력을 생성하며, 초저전력 센서 모듈에 전원을 공급할 수 있다.",
+      claims: [
+        "다층 압전 구조를 이용한 에너지 변환 방법",
+        "손목 착용형 진동 에너지 수집 모듈",
+      ],
+    },
+    인용문헌: { cited_by_count: 0, citing_count: 0, cited_patents: [] },
+    법적상태: { status: "심사중", status_code: "R0040", last_event: "출원심사청구", last_event_date: "2021.07.08", is_alive: true },
+    분류코드: { ipc: [{ code: "H02N 2/18", desc: "압전 효과를 이용한 전기 기계 변환" }], cpc: [] },
+  },
+  {
+    rank: 3,
+    similarity_score: 0.65,
+    공개등록공보: {
+      patent_id: "KR1020200112445",
+      title: "유연 태양전지 패널을 구비한 스마트 밴드",
+      applicant: "LG이노텍 주식회사",
+      inventor: "박민수",
+      application_number: "10-2020-0112445",
+      application_date: "2020.09.03",
+      publication_date: "2021.03.10",
+      doc_type: "등록특허공보",
+      abstract:
+        "유연한 소재로 제작된 태양전지 패널을 스마트 밴드 외부에 부착하여 자연광 및 실내 조명으로부터 전력을 생성하고, 스마트 워치 본체에 유선 또는 무선으로 전력을 전송하는 기술이다.",
+      claims: [
+        "유연 태양전지 패널을 포함하는 스마트 밴드 구조",
+        "무선 전력 전송 인터페이스",
+      ],
+    },
+    인용문헌: { cited_by_count: 0, citing_count: 0, cited_patents: [] },
+    법적상태: { status: "등록", status_code: "R0060", last_event: "등록결정", last_event_date: "2021.03.10", is_alive: true },
+    분류코드: { ipc: [], cpc: [] },
+  },
+  {
+    rank: 4,
+    similarity_score: 0.54,
+    공개등록공보: {
+      patent_id: "KR1020190203811",
+      title: "배터리 효율 향상을 위한 웨어러블 에너지 관리 시스템",
+      applicant: "애플코리아 유한회사",
+      inventor: "김지훈",
+      application_number: "10-2019-0203811",
+      application_date: "2019.12.20",
+      publication_date: "2020.06.30",
+      doc_type: "공개특허공보",
+      abstract:
+        "웨어러블 기기의 전력 소비를 최적화하고, 복수의 에너지원으로부터 수집된 전력을 효율적으로 관리하는 시스템이다. 사용 패턴을 학습하여 충전 우선순위를 동적으로 결정한다.",
+      claims: [
+        "다중 에너지원 통합 관리 알고리즘",
+        "사용 패턴 기반 배터리 충전 우선순위 결정 방법",
+      ],
+    },
+    인용문헌: { cited_by_count: 0, citing_count: 0, cited_patents: [] },
+    법적상태: { status: "소멸", status_code: "R0000", last_event: "소멸", last_event_date: "2020.06.30", is_alive: false },
+    분류코드: { ipc: [], cpc: [] },
+  },
+  {
+    rank: 5,
+    similarity_score: 0.41,
+    공개등록공보: {
+      patent_id: "KR1020230044567",
+      title: "열전소자를 이용한 체온 발전 웨어러블 디바이스",
+      applicant: "연세대학교 산학협력단",
+      inventor: "최수진",
+      application_number: "10-2023-0044567",
+      application_date: "2023.04.05",
+      publication_date: "2023.10.12",
+      doc_type: "공개특허공보",
+      abstract:
+        "인체와 외부 환경 간의 온도차를 이용하는 열전소자 기반의 발전 장치로, 지속적인 체온 에너지를 활용하여 소형 웨어러블 기기의 배터리를 보충 충전한다. 실리사이드 계열 소재를 적용하여 변환 효율을 극대화한다.",
+      claims: [
+        "체온 기반 열전소자 배열 및 발전 구조",
+        "실리사이드 소재 적용 에너지 변환 방법",
+      ],
+    },
+    인용문헌: { cited_by_count: 0, citing_count: 0, cited_patents: [] },
+    법적상태: { status: "심사중", status_code: "R0040", last_event: "출원심사청구", last_event_date: "2023.04.05", is_alive: true },
+    분류코드: { ipc: [], cpc: [] },
+  },
+];
+
+export const mockAnalysis: Analysis = {
+  novelty_score: 72,
+  novelty_reason:
+    "삼성전자 선행특허(10-2022-0145231)와 압전+태양광 복합 구조가 91% 유사하나, 에너지 혼합 비율 최적화 알고리즘은 차별점이 존재합니다.",
+  risk_level: "중간",
+  patent_title: "복합 에너지 하베스팅 기반 자가 충전형 스마트 워치 스트랩",
+  summary:
+    "입력된 아이디어는 압전 소자와 태양광 셀을 복합 적용한 스마트 워치 스트랩으로, 삼성전자의 선행특허(10-2022-0145231)와 기술적 유사성이 91%로 매우 높습니다. 다만, 에너지 혼합 비율 최적화 알고리즘과 소재 조성 측면에서 차별화 여지가 존재합니다. 선행특허 회피 설계를 통한 진보성 보강이 선행되어야 출원이 유리합니다.",
+  risk_reason:
+    "삼성전자 선행특허와 압전·태양광 복합 구조가 거의 동일하여 단순 조합 발명으로 거절될 위험이 높습니다.",
+  recommendation:
+    "충전 효율을 극대화하는 독자적 에너지 관리 알고리즘을 핵심 청구항으로 구성하고, 생체 친화적 압전 폴리머 소재 혁신을 추가하면 선행특허와 명확히 차별화할 수 있습니다. PCT 경로를 통한 해외 출원도 병행 권장합니다.",
+  five_aspects: {
+    innovation_point:
+      "압전·태양광 복합 하베스팅으로 단일 에너지원 대비 발전 효율 40% 향상이 기대됩니다. 별도 충전 없이 장기 착용이 가능한 점이 핵심 혁신입니다.",
+    implementation:
+      "PVDF 압전 필름과 페로브스카이트 태양전지를 다층 구조로 스트랩에 임베딩합니다. 전력 관리 IC를 통해 두 에너지원을 병렬로 운용합니다.",
+    marketability:
+      "글로벌 스마트워치 시장은 2028년 약 320억 달러 규모 예상. 배터리 수명에 민감한 헬스케어·피트니스 사용자 타겟으로 높은 수요가 기대됩니다.",
+    design_around:
+      "삼성 특허와의 차별화를 위해 AI 기반 에너지 혼합 비율 최적화 알고리즘을 핵심 청구항으로 구성하세요. 특정 소재(PVDF 나노 컴포지트)로 범위를 한정하는 전략도 유효합니다.",
+    registrability:
+      "단순 조합 발명으로 거절될 위험이 있어 알고리즘·소재 혁신으로 진보성을 보강해야 합니다. 국내 출원 후 PCT 경로를 통한 해외 출원을 권장합니다.",
+  },
+  prior_art_comparison: [
+    {
+      patent_id: "10-2022-0145231",
+      title: "웨어러블 디바이스용 자가발전 에너지 하베스팅 스트랩",
+      threat_level: "높음",
+      overlap: "압전+태양광 복합 에너지 수집, 스트랩 일체형 구조, 자동 배터리 충전",
+      difference: "충전 알고리즘의 구체적 구현 방식, 사용 소재의 세부 조성",
+    },
+    {
+      patent_id: "10-2021-0089332",
+      title: "압전소자 기반 신체 동작 에너지 변환 장치",
+      threat_level: "중간",
+      overlap: "압전 에너지 수집, 손목 착용형 구조",
+      difference: "태양광 복합 미적용, 스트랩 형태 아님",
+    },
+  ],
+};
