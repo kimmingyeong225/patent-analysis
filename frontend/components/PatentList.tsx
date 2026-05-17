@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ChevronDown, ExternalLink, Info } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { PatentResult } from "@/lib/types";
+import { buildPatentLinks } from "@/lib/patentUrls";
 import PatentDetailModal from "./PatentDetailModal";
 
 /* ── 유사도 색상 ──────────────────────────────── */
@@ -42,15 +43,7 @@ function PatentRow({
   // 음수/NaN 방어 + FAISS 실패 시 0.0 처리용 clamp
   const pct = Math.round(Math.max(0, patent.similarity_score ?? 0) * 100);
   const { text, bg, border } = scoreStyle(pct);
-  const appNumClean = pub.application_number.replace(/-/g, "");
-  const patentIdClean = pub.patent_id?.replace(/-/g, "") || "";
-  // Google Patents는 한국 특허 앞 '10' 접두어를 제외한 번호 사용
-  // ex) 1020240168054 → KR20240168054A
-  const patentIdForGoogle = patentIdClean.startsWith("10")
-    ? patentIdClean.slice(2)
-    : patentIdClean;
-  const kiprisUrl = `https://doi.org/10.8080/${appNumClean}`;
-  const googlePatentsUrl = `https://patents.google.com/patent/KR${patentIdForGoogle}A`;
+  const { kiprisUrl, googlePatentsUrl } = buildPatentLinks(pub);
 
   return (
     <div className="border-b border-gray-100 last:border-b-0">
