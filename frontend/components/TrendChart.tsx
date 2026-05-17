@@ -7,6 +7,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell,
 } from "recharts";
+import type { TooltipProps } from "recharts";
 import { Search, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { BACKEND_URL } from "@/lib/constants";
 
@@ -14,12 +15,12 @@ type TrendPoint = { year: string; count: number };
 type ChartType = "막대" | "라인";
 
 /* ── 커스텀 툴팁 ─────────────────────────────── */
-function CustomTooltip({ active, payload, label }: any) {
+function CustomTooltip({ active, payload, label }: TooltipProps<number, string>) {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-white border border-gray-100 rounded-lg px-3 py-2 shadow-lg text-sm">
       <p className="font-semibold text-slate-700 mb-0.5">{label}년</p>
-      <p className="text-blue-600 font-mono">{payload[0].value.toLocaleString()}건</p>
+      <p className="text-blue-600 font-mono">{payload[0].value?.toLocaleString() ?? "—"}건</p>
     </div>
   );
 }
