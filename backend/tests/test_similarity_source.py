@@ -39,7 +39,7 @@ os.environ["RATE_LIMIT_SIMILARITY"] = "100/minute"
 
 def _reload_app():
     """환경변수 변경 후 main/config 를 깨끗이 다시 로드."""
-    for mod in ("config", "main"):
+    for mod in ("config", "main", "cache", "limiter"):
         if mod in sys.modules:
             del sys.modules[mod]
     import main  # noqa: F401

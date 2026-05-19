@@ -1,18 +1,16 @@
 import hashlib
 import logging
 import os
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, Optional, Tuple
+from typing import Optional, Tuple
 
 from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
 
 # 다른 모듈이 logger를 잡기 전에 루트 로깅 구성을 먼저 적용
 logging.basicConfig(
@@ -34,128 +32,21 @@ from kipris import (
 from mock_data import MOCK_SEARCH_RESPONSE
 import llm
 
-# 메모리 캐시 — 동일 쿼리 재요청 시 API 재호출 방지 (최대 50개, 초과 시 오래된 항목 삭제)
-_CACHE_MAX = 50
-_faiss_cache: dict = {}  # { query: (index, chunks) }
-_trend_cache: dict = {}  # { query: { trend_data, is_truncated } }
-
-# Phase 1-G: _faiss_cache 동시성 보호 (per-key threading.Lock + guard lock).
-# FastAPI sync handler 는 anyio 스레드풀에서 실행되므로 threading primitive 를 사용한다.
-# _faiss_cache_guard : _faiss_key_locks dict 자체를 보호하는 가드 락
-# _faiss_key_locks   : 쿼리별 빌드 직렬화용 락 (같은 query 는 한 번만 빌드)
-# 락은 재사용 — 빌드 완료 후에도 제거하지 않음. _CACHE_MAX=50 수준이라 누적돼도
-# 메모리 영향 미미, 제거 시 race 여지만 늘어남. 의도된 결정.
-_faiss_cache_guard: threading.Lock = threading.Lock()
-_faiss_key_locks: dict[str, threading.Lock] = {}
-
-
-def _cache_put(cache: dict, key: str, value):
-    """캐시에 항목 추가. 최대 크기 초과 시 가장 오래된 항목 삭제."""
-    if key not in cache and len(cache) >= _CACHE_MAX:
-        oldest = next(iter(cache))
-        del cache[oldest]
-    cache[key] = value
-
-
-def _get_or_build_faiss_index(
-    query: str,
-    build_fn: Callable[[], Optional[Tuple]],
-) -> Optional[Tuple]:
-    """_faiss_cache 에서 (index, chunks) 를 조회하거나, 없으면 락을 잡고 빌드한다.
-
-    Double-checked locking 패턴:
-      1) lock 없이 1차 체크 (hot path, 99%)
-      2) 가드 락으로 key_locks dict 접근 보호, per-key 락 획득/생성
-      3) per-key 락 안에서 2차 체크 — 대기 중 다른 스레드가 빌드했을 가능성
-      4) build_fn() 호출 후 성공 시에만 캐시에 저장
-
-    build_fn 규약:
-      - 반환값: (index, chunks) 튜플 또는 None
-      - None  → 빌드 대상 없음 (e.g. 청킹 결과 0건). 캐시 저장 안 함, 호출자에게 None 전달.
-      - 예외  → 그대로 전파. 캐시에 실패값 저장 안 함. 다음 요청은 재시도 가능.
-    """
-    # 1차 체크 — 빠른 경로
-    cached = _faiss_cache.get(query)
-    if cached is not None:
-        return cached
-
-    # 가드 락으로 key_locks dict 보호 (짧게 잡고 놔줌)
-    with _faiss_cache_guard:
-        key_lock = _faiss_key_locks.get(query)
-        if key_lock is None:
-            key_lock = threading.Lock()
-            _faiss_key_locks[query] = key_lock
-
-    # per-key 락 — 같은 쿼리로 들어온 동시 요청은 여기서 직렬화
-    with key_lock:
-        # 2차 체크 — 대기 중 다른 스레드가 빌드 완료했을 수 있음
-        cached = _faiss_cache.get(query)
-        if cached is not None:
-            return cached
-
-        # 빌드 (예외 발생 시 그대로 전파 — 캐시에 실패값 저장 안 함)
-        result = build_fn()
-        if result is None:
-            # 빌드 대상 없음 (chunks empty 등) — 캐시 저장 안 함
-            return None
-
-        _cache_put(_faiss_cache, query, result)
-        return result
-
-
-# Phase 1-G.1: _trend_cache 동시성 보호 (per-key threading.Lock + guard lock).
-# 1-G 의 _faiss_cache 패턴을 trend 캐시에 동일 적용. guard / key_locks 는
-# faiss 와 별도 — 같은 query 가 두 캐시에 존재할 때 cross-cache 직렬화 방지.
-# 락 누적 정책 / _CACHE_MAX 근거는 _faiss_key_locks 주석과 동일.
-_trend_cache_guard: threading.Lock = threading.Lock()
-_trend_key_locks: dict[str, threading.Lock] = {}
-
-
-def _get_or_build_trend_cache(
-    query: str,
-    build_fn: Callable[[], Optional[dict]],
-) -> Optional[dict]:
-    """_trend_cache 에서 trend dict 를 조회하거나, 없으면 락을 잡고 빌드한다.
-
-    Double-checked locking 패턴 — _get_or_build_faiss_index 와 동형.
-
-    build_fn 규약:
-      - 반환값: dict ({"trend_data": [...], "is_truncated": bool}) 또는 None
-      - None  → 캐시 저장 안 함, 호출자에게 None 전달.
-      - 예외  → 그대로 전파, 캐시에 실패값 저장 안 함, 다음 요청 재시도 가능.
-
-    실측: 현 build_fn = fetch_trend_data_from_kipris 는 예외 swallow + 항상 dict
-    반환이라 None / 예외 분기는 도달 불가. 시그니처는 1-G 와 일치시킴 (방어 가드).
-    """
-    # 1차 체크 — 빠른 경로
-    cached = _trend_cache.get(query)
-    if cached is not None:
-        logger.info("Trend cache hit: %s", query)
-        return cached
-
-    # 가드 락으로 key_locks dict 보호 (짧게 잡고 놔줌)
-    with _trend_cache_guard:
-        key_lock = _trend_key_locks.get(query)
-        if key_lock is None:
-            key_lock = threading.Lock()
-            _trend_key_locks[query] = key_lock
-
-    # per-key 락 — 같은 쿼리로 들어온 동시 요청은 여기서 직렬화
-    with key_lock:
-        # 2차 체크 — 대기 중 다른 스레드가 빌드 완료했을 수 있음
-        cached = _trend_cache.get(query)
-        if cached is not None:
-            logger.info("Trend cache hit: %s", query)
-            return cached
-
-        # 빌드 (예외 발생 시 그대로 전파 — 캐시에 실패값 저장 안 함)
-        logger.info("Trend cache miss. Fetching from KIPRIS: %s", query)
-        result = build_fn()
-        if result is None:
-            return None
-
-        _cache_put(_trend_cache, query, result)
-        return result
+# Phase 3-A.1: 캐시 / Limiter 모듈 분리.
+# tests/ 가 main.* attribute (read / .clear() / .reset() / monkeypatch.setattr) 형태로
+# 접근 중 → 호환을 위해 명시 re-export. Phase 3-A.1.1 에서 테스트가 cache/limiter
+# 직접 import 하도록 migration 후 shim 제거 예정.
+from cache import (
+    _faiss_cache,
+    _trend_cache,
+    _faiss_cache_guard,
+    _faiss_key_locks,
+    _trend_cache_guard,
+    _trend_key_locks,
+    _get_or_build_faiss_index,
+    _get_or_build_trend_cache,
+)
+from limiter import limiter
 
 
 # 환경 변수 로드 (.env 파일) — config.py에서도 이미 로드하나 명시성 위해 유지
@@ -166,10 +57,8 @@ config.log_missing_env()
 Base.metadata.create_all(bind=engine)
 app = FastAPI(title="특허 분석 시스템 API", version="1.0.0")
 
-# 레이트 리밋 — IP 기준. 엔드포인트별 한도는 config.RATE_LIMIT_* env로 오버라이드 가능.
-# - headers_enabled=True : 429 응답에 Retry-After + X-RateLimit-* 헤더 주입 (클라이언트 backoff 용)
-# - SlowAPIMiddleware : FastAPI 응답이 Response 객체로 완성된 뒤 헤더를 안전하게 추가
-limiter = Limiter(key_func=get_remote_address, headers_enabled=True)
+# 레이트 리밋 등록 — limiter 인스턴스는 limiter.py 에서 import.
+# SlowAPIMiddleware 가 FastAPI 응답이 Response 객체로 완성된 뒤 헤더를 안전하게 추가.
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)

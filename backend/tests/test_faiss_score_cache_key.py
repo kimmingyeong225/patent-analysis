@@ -37,7 +37,7 @@ def _reload_app():
 
     재import 시 _faiss_cache / _faiss_key_locks 는 빈 dict 로 초기화 → 테스트 격리.
     """
-    for mod in ("config", "main"):
+    for mod in ("config", "main", "cache", "limiter"):
         if mod in sys.modules:
             del sys.modules[mod]
     import main  # noqa: F401
