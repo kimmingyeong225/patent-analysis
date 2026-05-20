@@ -63,12 +63,13 @@ def client(monkeypatch):
     """TestClient + LLM mock + limiter 저장소 초기화."""
     import llm as llm_mod
     import main
+    from limiter import limiter as limiter_mod  # post-reload 동기화 (Phase 3-A.1.1)
 
     monkeypatch.setattr(llm_mod, "analyze_novelty", lambda *a, **k: _fake_llm_result())
 
     # 다른 테스트가 limiter 스토리지에 남긴 카운터를 초기화 (moving-window 안에 있으면 즉시 429)
     try:
-        main.limiter.reset()
+        limiter_mod.reset()
     except Exception:
         pass
 

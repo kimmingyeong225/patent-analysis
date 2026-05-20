@@ -102,6 +102,7 @@ def test_faiss_score_different_patents_no_collision(monkeypatch):
     핵심 가드 — 옵션 5 (no-op) 라면 1 entry 로 합쳐져 patents_B score=0.0 발생.
     """
     main = _reload_app()
+    import cache  # post-reload 동기화 (Phase 3-A.1.1 stale binding 회피)
     counters = _mock_embedding_helpers(main, monkeypatch, lambda pid: 0.7)
 
     patents_A = [_make_patent(p) for p in ["A1", "A2", "A3"]]
@@ -112,8 +113,8 @@ def test_faiss_score_different_patents_no_collision(monkeypatch):
     main._apply_faiss_scores(patents_B, query)
 
     # 두 호출이 서로 다른 cache_key 를 만들었어야 함
-    assert len(main._faiss_cache) == 2, (
-        f"cache entry count={len(main._faiss_cache)} (기대: 2). 키가 합쳐졌으면 1."
+    assert len(cache._faiss_cache) == 2, (
+        f"cache entry count={len(cache._faiss_cache)} (기대: 2). 키가 합쳐졌으면 1."
     )
     # build 도 2회 (각자 자기 chunks 로)
     assert counters["build"] == 2, f"build count={counters['build']} (기대: 2)"
@@ -129,6 +130,7 @@ def test_faiss_score_same_patents_cache_hit(monkeypatch):
     Phase 1-G hot path 보존 검증: 정상 케이스에서는 캐시 효율 동일.
     """
     main = _reload_app()
+    import cache  # post-reload 동기화 (Phase 3-A.1.1 stale binding 회피)
     counters = _mock_embedding_helpers(main, monkeypatch, lambda pid: 0.9)
 
     patents_template = [_make_patent(p) for p in ["X1", "X2", "X3"]]
@@ -145,7 +147,7 @@ def test_faiss_score_same_patents_cache_hit(monkeypatch):
         f"2차 호출에서 build 가 또 일어남 (count={counters['build']}). "
         f"같은 patents 면 키 동일 → cache hit 이어야 함."
     )
-    assert len(main._faiss_cache) == 1
+    assert len(cache._faiss_cache) == 1
 
 
 def test_faiss_score_filter_then_score_no_mismatch(monkeypatch):
@@ -160,6 +162,7 @@ def test_faiss_score_filter_then_score_no_mismatch(monkeypatch):
     재사용돼 patents_filter_B 의 patents_filter_A 에 없는 ID (F4, F5) score=0.0.
     """
     main = _reload_app()
+    import cache  # post-reload 동기화 (Phase 3-A.1.1 stale binding 회피)
     _mock_embedding_helpers(main, monkeypatch, lambda pid: 0.8)
 
     # filter_A 결과 (e.g., year_from=2020 통과): F1, F2, F3
@@ -183,7 +186,7 @@ def test_faiss_score_filter_then_score_no_mismatch(monkeypatch):
     assert f5_score == 0.8, f"F5 score={f5_score} (기대: 0.8). 캐시 키 결함 잔존 신호."
 
     # 두 호출이 별개 cache entry
-    assert len(main._faiss_cache) == 2
+    assert len(cache._faiss_cache) == 2
 
 
 def test_faiss_score_max_results_variance_no_mismatch(monkeypatch):
@@ -196,6 +199,7 @@ def test_faiss_score_max_results_variance_no_mismatch(monkeypatch):
     Phase 2-A.2: 각 호출이 자기 cache entry → 추가 10건도 정상 score.
     """
     main = _reload_app()
+    import cache  # post-reload 동기화 (Phase 3-A.1.1 stale binding 회피)
     _mock_embedding_helpers(main, monkeypatch, lambda pid: 0.6)
 
     # 1차: 30건 (max_results=5 → fetch_count=30 시뮬레이션)
@@ -223,4 +227,4 @@ def test_faiss_score_max_results_variance_no_mismatch(monkeypatch):
     )
 
     # 두 호출이 별개 cache entry
-    assert len(main._faiss_cache) == 2
+    assert len(cache._faiss_cache) == 2

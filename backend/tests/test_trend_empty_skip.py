@@ -52,6 +52,7 @@ def test_trend_empty_result_skips_cache(monkeypatch):
     Phase 2-A.1 핵심 가드 — 빈 trend_data 가 캐시되면 _CACHE_MAX 동안 stale lock-in.
     """
     main = _reload_app()
+    import cache  # post-reload 동기화 (Phase 3-A.1.1 stale binding 회피)
     monkeypatch.setattr(
         main,
         "fetch_trend_data_from_kipris",
@@ -65,7 +66,7 @@ def test_trend_empty_result_skips_cache(monkeypatch):
     assert body["trend_data"] == []
     assert body["is_truncated"] is False
     # 핵심 가드: 캐시에 entry 없어야 함 (lock-in 방지)
-    assert "__phase2a1_empty__" not in main._trend_cache
+    assert "__phase2a1_empty__" not in cache._trend_cache
 
 
 def test_trend_empty_then_recovery(monkeypatch):
@@ -111,6 +112,7 @@ def test_trend_normal_caches(monkeypatch):
     2차 호출 시 KIPRIS 재호출 없이 캐시 hit 검증.
     """
     main = _reload_app()
+    import cache  # post-reload 동기화 (Phase 3-A.1.1 stale binding 회피)
 
     call_count = {"n": 0}
 
@@ -132,7 +134,7 @@ def test_trend_normal_caches(monkeypatch):
     r1 = client.get("/trend", params={"query": "__phase2a1_normal__"})
     assert r1.status_code == 200, r1.text
     assert len(r1.json()["trend_data"]) == 2
-    assert "__phase2a1_normal__" in main._trend_cache
+    assert "__phase2a1_normal__" in cache._trend_cache
 
     # 2차: 캐시 hit, KIPRIS 미호출
     r2 = client.get("/trend", params={"query": "__phase2a1_normal__"})
@@ -151,6 +153,7 @@ def test_trend_is_truncated_only_no_data(monkeypatch):
     응답의 is_truncated 는 False (default) — 빈 결과의 stale 메타정보 전달 회피.
     """
     main = _reload_app()
+    import cache  # post-reload 동기화 (Phase 3-A.1.1 stale binding 회피)
     monkeypatch.setattr(
         main,
         "fetch_trend_data_from_kipris",
@@ -164,4 +167,4 @@ def test_trend_is_truncated_only_no_data(monkeypatch):
     assert body["trend_data"] == []
     # default 분기 통과 — 원본 is_truncated=True 가 아닌 default False 반환
     assert body["is_truncated"] is False
-    assert "__phase2a1_truncated_empty__" not in main._trend_cache
+    assert "__phase2a1_truncated_empty__" not in cache._trend_cache

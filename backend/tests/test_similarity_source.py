@@ -64,10 +64,11 @@ def test_similarity_source_use_mock_success(monkeypatch):
     """A: USE_MOCK=true + chunks 정상 → source='mock', total_chunks>0, results 있음."""
     monkeypatch.setenv("USE_MOCK", "true")
     main = _reload_app()
+    import cache  # post-reload 동기화 (Phase 3-A.1.1 stale binding 회피)
 
     fake_chunks = ["chunk-A", "chunk-B"]  # len=2 → total_chunks=2
     monkeypatch.setattr(
-        main, "_get_or_build_faiss_index",
+        cache, "_get_or_build_faiss_index",
         lambda query, build_fn: (object(), fake_chunks),
     )
     monkeypatch.setattr(
@@ -95,9 +96,10 @@ def test_similarity_source_use_mock_chunks_empty(monkeypatch):
     """
     monkeypatch.setenv("USE_MOCK", "true")
     main = _reload_app()
+    import cache  # post-reload 동기화 (Phase 3-A.1.1 stale binding 회피)
 
     monkeypatch.setattr(
-        main, "_get_or_build_faiss_index",
+        cache, "_get_or_build_faiss_index",
         lambda query, build_fn: None,
     )
 
@@ -145,6 +147,7 @@ def test_similarity_source_kipris_success(monkeypatch):
     """
     monkeypatch.setenv("USE_MOCK", "false")
     main = _reload_app()
+    import cache  # post-reload 동기화 (Phase 3-A.1.1 stale binding 회피)
 
     monkeypatch.setattr(
         main, "fetch_patent_data_from_kipris",
@@ -152,7 +155,7 @@ def test_similarity_source_kipris_success(monkeypatch):
     )
     fake_chunks = ["chunk-1", "chunk-2", "chunk-3"]  # len=3
     monkeypatch.setattr(
-        main, "_get_or_build_faiss_index",
+        cache, "_get_or_build_faiss_index",
         lambda query, build_fn: (object(), fake_chunks),
     )
     monkeypatch.setattr(
@@ -180,13 +183,14 @@ def test_similarity_source_kipris_chunks_empty(monkeypatch):
     """
     monkeypatch.setenv("USE_MOCK", "false")
     main = _reload_app()
+    import cache  # post-reload 동기화 (Phase 3-A.1.1 stale binding 회피)
 
     monkeypatch.setattr(
         main, "fetch_patent_data_from_kipris",
         lambda query, docs_count=30: [{"공개등록공보": {"patent_id": "P-1"}}],
     )
     monkeypatch.setattr(
-        main, "_get_or_build_faiss_index",
+        cache, "_get_or_build_faiss_index",
         lambda query, build_fn: None,
     )
 

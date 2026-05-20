@@ -32,20 +32,7 @@ from kipris import (
 from mock_data import MOCK_SEARCH_RESPONSE
 import llm
 
-# Phase 3-A.1: 캐시 / Limiter 모듈 분리.
-# tests/ 가 main.* attribute (read / .clear() / .reset() / monkeypatch.setattr) 형태로
-# 접근 중 → 호환을 위해 명시 re-export. Phase 3-A.1.1 에서 테스트가 cache/limiter
-# 직접 import 하도록 migration 후 shim 제거 예정.
-from cache import (
-    _faiss_cache,
-    _trend_cache,
-    _faiss_cache_guard,
-    _faiss_key_locks,
-    _trend_cache_guard,
-    _trend_key_locks,
-    _get_or_build_faiss_index,
-    _get_or_build_trend_cache,
-)
+import cache
 from limiter import limiter
 
 
@@ -285,7 +272,7 @@ def get_trend(request: Request, response: Response, query: str):
             return None
         return result
 
-    cached = _get_or_build_trend_cache(query, _build)
+    cached = cache._get_or_build_trend_cache(query, _build)
     if cached is None:
         # 빈 결과 — _build 가 None 반환 (Phase 2-A.1, 캐시 저장 스킵).
         return {"query": query, "trend_data": [], "is_truncated": False}
@@ -318,7 +305,7 @@ def _apply_faiss_scores(patents: list, query: str) -> list:
                 return None
             return build_faiss_index(chunks_local)
 
-        cached = _get_or_build_faiss_index(cache_key, _build)
+        cached = cache._get_or_build_faiss_index(cache_key, _build)
         if cached is None:
             # chunks empty — FAISS 계산 스킵, 원본 순서/점수 유지
             return patents
@@ -382,7 +369,7 @@ def similarity_search(request: Request, response: Response, payload: schemas.Sim
             return None
         return build_faiss_index(chunks_local)
 
-    cached_build = _get_or_build_faiss_index(query, _build)
+    cached_build = cache._get_or_build_faiss_index(query, _build)
     if cached_build is None:
         # 청킹 결과 0건 — 빈 응답 반환 (기존 else 브랜치와 동일 시맨틱)
         return {"query": query, "total_chunks": 0, "source": source, "results": []}
