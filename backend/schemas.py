@@ -52,6 +52,11 @@ class SearchResultItem(BaseModel):
 class SearchResponse(BaseModel):
     query: str
     cached: bool
+    # source — 결과 출처 투명화 (Phase 1-F). 기본값 "kipris"로 하위 호환.
+    #   "kipris" : 실시간 KIPRIS 호출 (빈 결과 포함)
+    #   "mock"   : USE_MOCK=true 환경변수 분기
+    #   "cache"  : DB 영구 캐시 hit
+    source: Literal["kipris", "mock", "cache"] = "kipris"
     results: List[SearchResultItem]
 
 
@@ -106,4 +111,9 @@ class SimilarChunkItem(BaseModel):
 class SimilarityResponse(BaseModel):
     query: str
     total_chunks: int
+    # source — 결과 출처 투명화 (Phase 1-F.1). /similarity 는 DB 영구 캐시를
+    # 사용하지 않으므로 "cache" 값은 없음. SearchResponse.source 와 별도 Literal.
+    #   "kipris" : 실시간 KIPRIS 호출 (빈 결과/청킹 0건 포함)
+    #   "mock"   : USE_MOCK=true 환경변수 분기
+    source: Literal["kipris", "mock"] = "kipris"
     results: List[SimilarChunkItem]

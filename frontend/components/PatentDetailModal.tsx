@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { X, ExternalLink } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { PatentResult } from "@/lib/types";
+import { buildPatentLinks } from "@/lib/patentUrls";
 
 interface PatentDetailModalProps {
   patent: PatentResult | null;
@@ -79,13 +80,7 @@ function DetailBody({ patent }: { patent: PatentResult }) {
   const codes = patent.분류코드;
   const pct = Math.round(patent.similarity_score * 100);
 
-  const appNumClean = pub.application_number.replace(/-/g, "");
-  const patentIdClean = pub.patent_id?.replace(/-/g, "") || "";
-  const patentIdForGoogle = patentIdClean.startsWith("10")
-    ? patentIdClean.slice(2)
-    : patentIdClean;
-  const kiprisUrl = `https://doi.org/10.8080/${appNumClean}`;
-  const googlePatentsUrl = `https://patents.google.com/patent/KR${patentIdForGoogle}A`;
+  const { kiprisUrl, googlePatentsUrl } = buildPatentLinks(pub);
 
   return (
     <div className="space-y-5">

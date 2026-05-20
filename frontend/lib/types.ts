@@ -76,6 +76,25 @@ export interface Analysis {
 export interface SearchResponse {
   results: PatentResult[];
   cached: boolean;
+  // Phase 1-F: 결과 출처 투명화. 백엔드가 기본값 "kipris"로 항상 반환.
+  source: "kipris" | "mock" | "cache";
+}
+
+// Phase 1-F.1: /similarity 응답. DB 영구 캐시 없음 → "cache" 값 없음.
+// 현재 프론트에서 호출하는 컴포넌트는 없지만 타입만 선제 동기화.
+export interface SimilarChunkItem {
+  rank: number;
+  patent_id: string;
+  section: string;
+  text: string;
+  similarity_score: number;
+}
+
+export interface SimilarityResponse {
+  query: string;
+  total_chunks: number;
+  source: "kipris" | "mock";
+  results: SimilarChunkItem[];
 }
 
 export interface SearchFilters {

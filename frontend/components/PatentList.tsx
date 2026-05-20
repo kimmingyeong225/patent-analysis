@@ -4,10 +4,13 @@ import { useState } from "react";
 import { ChevronDown, ExternalLink, Info } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { PatentResult } from "@/lib/types";
+import { buildPatentLinks } from "@/lib/patentUrls";
 import PatentDetailModal from "./PatentDetailModal";
 
 /* ── 유사도 색상 ──────────────────────────────── */
 function scoreStyle(pct: number) {
+  // pct === 0 → "점수 없음" (FAISS 실패 또는 백엔드가 0.0 기본값 반환)
+  if (pct === 0) return { text: "text-slate-400",  bg: "bg-slate-50",  border: "border-slate-100" };
   if (pct >= 80) return { text: "text-red-600",    bg: "bg-red-50",    border: "border-red-100" };
   if (pct >= 60) return { text: "text-amber-600",  bg: "bg-amber-50",  border: "border-amber-100" };
   return           { text: "text-blue-600",    bg: "bg-blue-50",   border: "border-blue-100" };
@@ -37,17 +40,10 @@ function PatentRow({
 }) {
   const [open, setOpen] = useState(false);
   const pub = patent.공개등록공보;
-  const pct = Math.round(patent.similarity_score * 100);
+  // 음수/NaN 방어 + FAISS 실패 시 0.0 처리용 clamp
+  const pct = Math.round(Math.max(0, patent.similarity_score ?? 0) * 100);
   const { text, bg, border } = scoreStyle(pct);
-  const appNumClean = pub.application_number.replace(/-/g, "");
-  const patentIdClean = pub.patent_id?.replace(/-/g, "") || "";
-  // Google Patents는 한국 특허 앞 '10' 접두어를 제외한 번호 사용
-  // ex) 1020240168054 → KR20240168054A
-  const patentIdForGoogle = patentIdClean.startsWith("10")
-    ? patentIdClean.slice(2)
-    : patentIdClean;
-  const kiprisUrl = `https://doi.org/10.8080/${appNumClean}`;
-  const googlePatentsUrl = `https://patents.google.com/patent/KR${patentIdForGoogle}A`;
+  const { kiprisUrl, googlePatentsUrl } = buildPatentLinks(pub);
 
   return (
     <div className="border-b border-gray-100 last:border-b-0">
@@ -56,9 +52,11 @@ function PatentRow({
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center gap-5 px-4 py-4 hover:bg-slate-50 transition-colors text-left"
       >
-        {/* 좌측: 유사도 + 순위 */}
+        {/* 좌측: 유사도 + 순위 — pct===0 은 점수 없음 표시 */}
         <div className={`shrink-0 w-16 flex flex-col items-center justify-center rounded-xl py-2 ${bg} ${border} border`}>
-          <span className={`text-xl font-bold leading-none ${text}`}>{pct}%</span>
+          <span className={`text-xl font-bold leading-none ${text}`}>
+            {pct === 0 ? "—" : `${pct}%`}
+          </span>
           <span className="text-xs text-slate-400 mt-0.5">{patent.rank}위</span>
         </div>
 

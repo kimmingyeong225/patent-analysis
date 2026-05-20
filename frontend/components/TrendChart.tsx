@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   BarChart, Bar,
   LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell,
 } from "recharts";
+import type { TooltipProps } from "recharts";
 import { Search, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { BACKEND_URL } from "@/lib/constants";
 
@@ -14,12 +15,12 @@ type TrendPoint = { year: string; count: number };
 type ChartType = "막대" | "라인";
 
 /* ── 커스텀 툴팁 ─────────────────────────────── */
-function CustomTooltip({ active, payload, label }: any) {
+function CustomTooltip({ active, payload, label }: TooltipProps<number, string>) {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-white border border-gray-100 rounded-lg px-3 py-2 shadow-lg text-sm">
       <p className="font-semibold text-slate-700 mb-0.5">{label}년</p>
-      <p className="text-blue-600 font-mono">{payload[0].value.toLocaleString()}건</p>
+      <p className="text-blue-600 font-mono">{payload[0].value?.toLocaleString() ?? "—"}건</p>
     </div>
   );
 }
@@ -55,34 +56,54 @@ export default function TrendChart({ initialKeyword }: TrendChartProps) {
   const [fetchError, setFetchError] = useState(false);
   const [chartType, setChartType] = useState<ChartType>("막대");
   const inputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
-  const fetchTrend = async (kw: string) => {
+  const fetchTrend = useCallback(async (kw: string) => {
     const trimmed = kw.trim();
     if (!trimmed) return;
+
+    // 진행 중인 요청 취소 — 늦게 도착한 응답이 최신 응답을 덮어쓰는 race 방지
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     setFetchError(false);
     try {
       const res = await fetch(
-        `${BACKEND_URL}/trend?query=${encodeURIComponent(trimmed)}`
+        `${BACKEND_URL}/trend?query=${encodeURIComponent(trimmed)}`,
+        { signal: controller.signal }
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
+      if (controller.signal.aborted) return;
       setData(json.trend_data ?? []);
       setIsTruncated(json.is_truncated ?? false);
       setDisplayed(trimmed);
     } catch (e) {
+      // abort 는 race 방지 의도 — 조용히 무시 (page.tsx fetchAnalysis 와 동일 패턴)
+      const name = (e as { name?: string } | null)?.name;
+      if (controller.signal.aborted || name === "AbortError") {
+        return;
+      }
       console.error("Trend fetch error:", e);
       setData([]);
       setFetchError(true);
     } finally {
-      setLoading(false);
+      // 새 fetch 가 setLoading(true) 를 이미 호출했으므로 abort 된 경우 덮어쓰지 않음
+      if (!controller.signal.aborted) {
+        setLoading(false);
+      }
     }
-  };
+  }, []);
 
   useEffect(() => {
     setKeyword(initialKeyword);
     fetchTrend(initialKeyword);
-  }, [initialKeyword]);
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, [initialKeyword, fetchTrend]);
 
   const handleSearch = () => fetchTrend(keyword);
 
